@@ -62,7 +62,7 @@ function performFinancialCalculations(commandId, products, palletsData) {
     const transportEl = document.getElementById('financiar-cost-transport');
     const discountEl = document.getElementById('financiar-reducere');
     
-    const currency = currencyEl ? currencyEl.value : 'RON';
+    const currency = (currencyEl ? currencyEl.value : '') || 'RON';
     let exchangeRate = 1;
 
     if (currency !== 'RON') {
