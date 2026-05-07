@@ -49,7 +49,7 @@ export async function sendToBalance(commandId, buttonElement) {
             const unitCost = calcData.unitCost;
             const details = detailsMap[p.asin] || {};
             
-            const rawTitle = (details.other_versions?.['Romanian']?.title || details.other_versions?.['romanian']?.title || details.title || "N/A").trim();
+            const rawTitle = (details.other_versions?.['Romanian']?.title || details.title || "N/A").trim();
             const roTitle = removeDiacritics(rawTitle);
 
             // Definim sufixele
@@ -416,7 +416,7 @@ export async function generateNIR(commandId, buttonElement) {
 
             const unitCost = calcData.unitCost;
             const details = detailsMap[p.asin] || {};
-            const rawTitle = (details.other_versions?.['Romanian']?.title || details.other_versions?.['romanian']?.title || details.title || "N/A").trim();
+            const rawTitle = (details.other_versions?.['Romanian']?.title || details.title || "N/A").trim();
             const roTitle = (rawTitle).normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Fără diacritice
 
             const conditions = [
