@@ -192,7 +192,7 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
             if (displayQty <= 0) return null;
 
             const details = detailsMap[p.asin] || {};
-            const roData = details.other_versions?.['romanian'] || {};
+            const roData = details.other_versions?.['Romanian'] || details.other_versions?.['romanian'] || {};
             
             const title = (roData.title || '').trim();
             const mainImage = (roData.images && roData.images[0]) ? roData.images[0] : ((details.images && details.images[0]) ? details.images[0] : '');
