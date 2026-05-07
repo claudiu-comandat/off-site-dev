@@ -42,14 +42,26 @@ export async function sendToBalance(commandId, buttonElement) {
         // 2. Construim Payload-ul
         const itemsPayload = [];
 
+        const titleErrors = [];
+        command.products.forEach(p => {
+            const calcData = financials[p.uniqueId];
+            if (!calcData || calcData.totalCost <= 0.01) return;
+            const t = (detailsMap[p.asin]?.other_versions?.['Romanian']?.title || '').trim();
+            if (!t || t === 'N/A' || t.length < 10) titleErrors.push(p.asin);
+        });
+        if (titleErrors.length > 0) {
+            alert(`Nu se poate trimite în Balanță!\nUrmătoarele produse nu au titlu RO valid:\n\n${titleErrors.join('\n')}`);
+            return;
+        }
+
         command.products.forEach(p => {
             const calcData = financials[p.uniqueId];
             if (!calcData || calcData.totalCost <= 0.01) return;
 
             const unitCost = calcData.unitCost;
             const details = detailsMap[p.asin] || {};
-            
-            const rawTitle = (details.other_versions?.['Romanian']?.title || details.title || "N/A").trim();
+
+            const rawTitle = (details.other_versions?.['Romanian']?.title || '').trim();
             const roTitle = removeDiacritics(rawTitle);
 
             // Definim sufixele
@@ -410,13 +422,25 @@ export async function generateNIR(commandId, buttonElement) {
         let grandTotalTVA = 0;
 
         // 2. Construire Date Tabel
+        const nirTitleErrors = [];
+        command.products.forEach(p => {
+            const calcData = financials[p.uniqueId];
+            if (!calcData || calcData.totalCost <= 0.01) return;
+            const t = (detailsMap[p.asin]?.other_versions?.['Romanian']?.title || '').trim();
+            if (!t || t === 'N/A' || t.length < 10) nirTitleErrors.push(p.asin);
+        });
+        if (nirTitleErrors.length > 0) {
+            alert(`Nu se poate genera NIR!\nUrmătoarele produse nu au titlu RO valid:\n\n${nirTitleErrors.join('\n')}`);
+            return;
+        }
+
         command.products.forEach(p => {
             const calcData = financials[p.uniqueId];
             if (!calcData || calcData.totalCost <= 0.01) return;
 
             const unitCost = calcData.unitCost;
             const details = detailsMap[p.asin] || {};
-            const rawTitle = (details.other_versions?.['Romanian']?.title || details.title || "N/A").trim();
+            const rawTitle = (details.other_versions?.['Romanian']?.title || '').trim();
             const roTitle = (rawTitle).normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Fără diacritice
 
             const conditions = [
