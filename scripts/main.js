@@ -65,7 +65,7 @@ function performFinancialCalculations(commandId, products, palletsData) {
     const currency = (currencyEl ? currencyEl.value : '') || 'RON';
     let exchangeRate = 1;
 
-    if (currency !== 'RON') {
+    if (currency !== 'RON' && currency !== 'LEI') {
         const rawRate = rateEl ? parseFloat(rateEl.value) : 0;
         if (!rawRate || rawRate <= 0 || rawRate === 1) {
              alert("EROARE CRITICĂ: Cursul valutar este invalid sau nesetat.");
