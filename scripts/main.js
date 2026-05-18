@@ -133,11 +133,13 @@ function performFinancialCalculations(commandId, products, palletsData) {
         return null;
     }
 
-    // 4. Calculăm ȚINTA REALĂ
+    // 4. Calculăm ȚINTA REALĂ — includem TOȚI paleții (și cei fără produse valide)
     let activePalletsTotalCost = 0;
+    let orphanPalletCost = 0;
     Object.keys(palletMap).forEach(sku => {
-        if (palletMap[sku].hasItems) {
-            activePalletsTotalCost += palletMap[sku].cost;
+        activePalletsTotalCost += palletMap[sku].cost;
+        if (!palletMap[sku].hasItems) {
+            orphanPalletCost += palletMap[sku].cost;
         }
     });
 
@@ -147,10 +149,14 @@ function performFinancialCalculations(commandId, products, palletsData) {
     const transportCostTotal = transportRaw * exchangeRate;
     const discountTotal = discountRaw * exchangeRate;
     const finalTransportCost = transportCostTotal - discountTotal;
-    
+
     const TARGET_TOTAL = activePalletsTotalCost + finalTransportCost;
 
     // 5. Calcul Brut per Produs
+    // Costul paletilor fara produse valide (ex: tot broken) e redistribuit
+    // proportional dupa valoarea estimata a produselor valide.
+    const totalGlobalSales = validProducts.reduce((sum, p) => sum + (p.price * p.qty), 0);
+
     let currentCalculatedSum = 0;
     const resultsBuffer = [];
     const transportPerUnit = finalTransportCost / totalValidQty;
@@ -159,12 +165,17 @@ function performFinancialCalculations(commandId, products, palletsData) {
         const pal = palletMap[p.manifestSku];
         let percent = 0;
         let palletComponentTotal = 0;
-        
+
         if (pal && pal.totalSales > 0) {
             const lineValue = p.price * p.qty;
             const lineShare = lineValue / pal.totalSales;
             palletComponentTotal = lineShare * pal.cost;
             percent = lineShare * 100;
+        }
+
+        // Redistribuie costul paletilor orphani proportional pe toate produsele valide
+        if (orphanPalletCost > 0 && totalGlobalSales > 0) {
+            palletComponentTotal += (p.price * p.qty / totalGlobalSales) * orphanPalletCost;
         }
 
         const transportComponentTotal = transportPerUnit * p.qty;
