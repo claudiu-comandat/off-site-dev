@@ -108,12 +108,11 @@ function performFinancialCalculations(commandId, products, palletsData) {
             errorMessages.push(`- Produs ${p.asin}: Lipsește Manifest SKU`);
         } else if (price <= 0) {
             errorMessages.push(`- Produs ${p.asin} (SKU: ${manifestSku}): Preț estimat este 0`);
+        } else if (!palletMap[manifestSku]) {
+            errorMessages.push(`- Produs ${p.asin} (SKU: ${manifestSku}): Nu există palet asociat pentru această comandă`);
         } else {
-            // Dacă totul e ok, îl adăugăm la calcul
-            if (palletMap[manifestSku]) {
-                palletMap[manifestSku].totalSales += (price * qty);
-                palletMap[manifestSku].hasItems = true;
-            }
+            palletMap[manifestSku].totalSales += (price * qty);
+            palletMap[manifestSku].hasItems = true;
             validProducts.push({ ...p, price, qty, manifestSku });
             totalValidQty += qty;
         }
@@ -165,7 +164,7 @@ function performFinancialCalculations(commandId, products, palletsData) {
             const lineValue = p.price * p.qty;
             const lineShare = lineValue / pal.totalSales;
             palletComponentTotal = lineShare * pal.cost;
-            percent = p.price / pal.totalSales;
+            percent = lineShare * 100;
         }
 
         const transportComponentTotal = transportPerUnit * p.qty;
