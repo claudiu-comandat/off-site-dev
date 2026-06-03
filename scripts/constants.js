@@ -22,6 +22,11 @@ export const GENERATE_NIR_WEBHOOK_URL = `${BASE}/generate-nir`;
 export const GET_PALLETS_WEBHOOK_URL = `${BASE}/get-pallets`;
 export const INSERT_BALANCE_WEBHOOK_URL = `${BASE}/insert-balanta`;
 
+// OpenSales — server separat (Railway), nu n8n. Endpoint dry-run/preview:
+// întoarce per produs+marketplace payload-ul complet + missingRequired + warnings,
+// fără să scrie nimic real. API key se cere la click (prompt) și merge ca Bearer.
+export const OPENSALES_PREVIEW_URL = 'https://opensalesapi-production-4572.up.railway.app/import/products/preview';
+
 export const languages = {
     'bg': 'Bulgarian', 'de': 'German', 'ro': 'Romanian', 'hu': 'Hungarian',
     'el': 'Greek', 'sq': 'Albanian', 'be': 'Belarusian', 'bs': 'Bosnian',

@@ -498,6 +498,11 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
                         <span class="material-icons text-sm">account_balance</span>
                         <span>Trimite în Balanță</span>
                     </button>
+
+                    <button id="opensales-preview-btn" data-action="opensales-preview" class="px-4 py-2 bg-teal-600 text-white font-bold rounded-lg hover:bg-teal-700 transition-colors flex items-center gap-2 shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        <span class="material-icons text-sm">science</span>
+                        <span>Preview OpenSales</span>
+                    </button>
                 </div>
             </div>
             

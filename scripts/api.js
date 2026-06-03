@@ -1,11 +1,13 @@
 // scripts/api.js
-import { 
-    N8N_UPLOAD_WEBHOOK_URL, 
-    READY_TO_LIST_WEBHOOK_URL, 
+import {
+    N8N_UPLOAD_WEBHOOK_URL,
+    READY_TO_LIST_WEBHOOK_URL,
     ASIN_UPDATE_WEBHOOK_URL,
     SAVE_FINANCIAL_WEBHOOK_URL,
     GENERATE_NIR_WEBHOOK_URL,
-    INSERT_BALANCE_WEBHOOK_URL 
+    INSERT_BALANCE_WEBHOOK_URL,
+    GET_PRODUCT_ATTRIBUTES_URL,
+    OPENSALES_PREVIEW_URL
 } from './constants.js';
 import { fetchDataAndSyncState, AppState, fetchProductDetailsInBulk } from './data.js';
 import { state } from './state.js';
@@ -592,6 +594,255 @@ export async function generateNIR(commandId, buttonElement) {
     } catch (error) {
         console.error('Eroare la generarea NIR:', error);
         alert(`Eroare: ${error.message}`);
+    } finally {
+        buttonElement.disabled = false;
+        buttonElement.innerHTML = originalHTML;
+    }
+}
+
+// ============================================================================
+//  OPENSALES — Request DRY-RUN către POST /import/products/preview
+// ============================================================================
+// Asamblăm DOAR formatul OpenSales de input (secțiunea 2 din spec). NU calculăm
+// payload-urile per-marketplace (eMAG/Trendyol/Temu) — alea le face serverul și
+// ni le întoarce. NU trimitem câmpurile hardcodate de server (secțiunea 3).
+//
+// STADIU CURENT (v2): construim ofertele eMAG (emag-ro/bg/hu) + o ofertă Temu cu
+// variations ([{ specId, specName, parentSpecId }]) și caracteristici. Pentru eMAG
+// avem tot (categorie, brand, caracteristici [{id,value}]). Pentru Temu trimitem ce
+// avem și lăsăm dry-run-ul să raporteze ce mai lipsește (refPid/vid/costTemplateId).
+// Trendyol rămâne de adăugat după ce aducem ID-urile din backend (attributeValueId,
+// brandId Trendyol).
+
+// Tab-urile traduse sunt cheiate pe numele limbii în minuscule în other_versions
+// (vezi other_versions['romanian'] folosit la NIR/balanță). eMAG RO/BG/HU împart
+// aceeași categorie + caracteristici; diferă doar titlu/descriere/imagini per tab.
+const EMAG_OFFER_TABS = [
+    { marketplace: 'emag-ro', tab: 'romanian' },
+    { marketplace: 'emag-bg', tab: 'bulgarian' },
+    { marketplace: 'emag-hu', tab: 'hungarian' }
+];
+
+function osCleanImages(images) {
+    return [...new Set((images || []).filter(Boolean))].map(url => ({ url }));
+}
+
+// Atributele dintr-un bloc listing_data[platform].attributes -> [{ id:number, value:string }].
+// Valoarea poate fi string ("Negru", vechi) sau obiect { value_name, value_id } (din DB,
+// după enrichment SQL). Folosim DOAR numele (value_name). Sărim cheile ne-numerice
+// (ex: __categoryId). Eliminăm valorile goale.
+function osCharacteristics(attrs) {
+    return Object.entries(attrs || {})
+        .filter(([id]) => /^\d+$/.test(id))
+        .map(([id, raw]) => {
+            const valueName = (raw && typeof raw === 'object') ? raw.value_name : raw;
+            return { id: Number(id), value: valueName == null ? '' : String(valueName) };
+        })
+        .filter(c => c.value.trim() !== '');
+}
+
+// variations[platform] vine ca array (ex: Temu = [{ specId, specName, parentSpecId }]).
+// Acceptăm și forma veche singular (variation:{...}) pentru robustețe.
+function osVariations(platformBlock) {
+    if (!platformBlock) return [];
+    if (Array.isArray(platformBlock.variations)) return platformBlock.variations;
+    if (platformBlock.variation) return [platformBlock.variation];
+    return [];
+}
+
+/**
+ * Asamblează body-ul OpenSales pentru UN produs (secțiunea 2 + 11 din spec).
+ * @param {object} args
+ * @param {object} args.product   - item din command.products (asin, bncondition, barcode...)
+ * @param {object} args.details   - detaliile din fetchProductDetailsInBulk[asin]
+ * @param {object} args.listingData - listing_data din v2-get-product-attributes (per platformă)
+ * @param {number} args.vatRate   - 0 sau 21
+ * @returns {{ products: object[] }}
+ */
+export function buildOpenSalesPreviewRequest({ product, details, listingData, vatRate = 21 }) {
+    const d = details || {};
+    const ld = listingData || {};
+    const ro = d.other_versions?.['romanian'] || {};
+
+    // --- caracteristici eMAG -> [{ id:number, value:string }]
+    const emagAttrs = ld.emag?.attributes || {};
+    const emagCategory = ld.emag?.categoryId ?? null;
+    const characteristics = osCharacteristics(emagAttrs);
+
+    const offers = EMAG_OFFER_TABS.map(({ marketplace, tab }) => {
+        const v = d.other_versions?.[tab] || {};
+        const offer = { marketplace };
+        if (emagCategory != null) offer.category = emagCategory;
+        if (d.brand) offer.brand = d.brand;
+        if (characteristics.length) offer.characteristics = characteristics;
+        // Override generic per țară: doar dacă tab-ul există (altfel serverul cade pe produs).
+        if (v.title) offer.title = v.title;
+        if (v.description) offer.description = v.description;
+        const imgs = osCleanImages(v.images);
+        if (imgs.length) offer.images = imgs;
+        return offer;
+    });
+
+    // --- Temu: ofertă separată cu variations (ex: [{ specId, specName, parentSpecId }]).
+    // Trimitem ce avem (categorie + caracteristici + variations). Titlu/descriere/imagini
+    // le omitem intenționat → serverul cade pe câmpurile de la nivel de produs. Dry-run-ul
+    // raportează câmpurile Temu încă lipsă (refPid/vid/costTemplateId etc.).
+    const temuCategory = ld.temu?.categoryId ?? null;
+    const temuVariations = osVariations(ld.temu);
+    if (temuCategory != null || temuVariations.length) {
+        const temuOffer = { marketplace: 'temu' };
+        if (temuCategory != null) temuOffer.category = temuCategory;
+        if (d.brand) temuOffer.brand = d.brand;
+        const temuChars = osCharacteristics(ld.temu?.attributes);
+        if (temuChars.length) temuOffer.characteristics = temuChars;
+        if (temuVariations.length) temuOffer.variations = temuVariations;
+        offers.push(temuOffer);
+    }
+
+    const priceMinor = Math.round((parseFloat(d.price) || 0) * 100);
+
+    const productObj = {
+        sku: `${product.asin}CN`,            // ASIN + "CN" (condiție bncondition)
+        title: (ro.title || d.title || '').trim(),
+        price: priceMinor,                    // minor units (RON)
+        stock: Number(product.bncondition) || 0,
+        currency: 'RON',
+        vatRate
+    };
+
+    const description = ro.description || d.description;
+    if (description) productObj.description = description;
+
+    const images = osCleanImages(ro.images?.length ? ro.images : d.images);
+    if (images.length) productObj.images = images;
+
+    const ean = d.ean || product.barcode;
+    if (ean) productObj.ean = String(ean);
+    if (d.brand) productObj.brand = d.brand;
+
+    productObj.offers = offers;
+
+    return { products: [productObj] };
+}
+
+// Pop-up cu JSON formatat (răspunsul exact de la /preview, plus request-ul trimis
+// într-o secțiune colapsabilă pentru debugging). Folosește textContent — fără risc XSS.
+function showOpenSalesModal({ status, response, requestBody }) {
+    document.getElementById('opensales-modal')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'opensales-modal';
+    overlay.className = 'fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4';
+
+    const statusOk = status >= 200 && status < 300;
+    const statusBadge = `<span class="px-2 py-0.5 rounded text-xs font-bold ${statusOk ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">HTTP ${status}</span>`;
+
+    const pretty = (val) => (typeof val === 'string' ? val : JSON.stringify(val, null, 2));
+
+    overlay.innerHTML = `
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <div class="flex items-center justify-between px-5 py-3 border-b">
+                <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <span class="material-icons text-teal-600">science</span>
+                    Răspuns OpenSales (dry-run) ${statusBadge}
+                </h3>
+                <button data-os-close class="p-1 rounded-full hover:bg-gray-200">
+                    <span class="material-icons text-gray-600">close</span>
+                </button>
+            </div>
+            <div class="p-5 overflow-auto">
+                <pre class="text-xs bg-gray-900 text-gray-100 rounded p-4 overflow-auto whitespace-pre-wrap break-words" data-os-response></pre>
+                <details class="mt-4">
+                    <summary class="text-sm text-gray-500 cursor-pointer select-none">Request trimis</summary>
+                    <pre class="text-xs bg-gray-100 text-gray-700 rounded p-4 mt-2 overflow-auto whitespace-pre-wrap break-words" data-os-request></pre>
+                </details>
+            </div>
+        </div>`;
+
+    // textContent ca să nu interpretăm HTML din răspuns
+    overlay.querySelector('[data-os-response]').textContent = pretty(response);
+    overlay.querySelector('[data-os-request]').textContent = pretty(requestBody);
+
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay || e.target.closest('[data-os-close]')) close();
+    });
+    document.addEventListener('keydown', function onEsc(e) {
+        if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); }
+    });
+
+    document.body.appendChild(overlay);
+}
+
+/**
+ * Generează requestul DRY-RUN pentru PRIMUL produs din comanda selectată, îl trimite
+ * la OpenSales /preview și afișează răspunsul exact într-un pop-up.
+ */
+export async function sendOpenSalesPreview(commandId, buttonElement) {
+    const originalHTML = buttonElement.innerHTML;
+
+    const command = AppState.getCommands().find(c => c.id === commandId);
+    if (!command || !command.products?.length) {
+        alert('Comanda nu are produse.');
+        return;
+    }
+    const product = command.products[0]; // primul produs din listă
+
+    // API key cerut la click și trimis ca Bearer (nu se persistă).
+    const apiKey = prompt('Introduceți API key OpenSales:');
+    if (!apiKey || !apiKey.trim()) return;
+
+    buttonElement.disabled = true;
+    buttonElement.innerHTML = '<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div>';
+
+    try {
+        const detailsMap = await fetchProductDetailsInBulk([product.asin]);
+        const details = detailsMap[product.asin] || {};
+
+        // Mapările per-marketplace (categorie + caracteristici) nu sunt în detaliile
+        // de bază — le luăm separat din v2-get-product-attributes.
+        let listingData = {};
+        try {
+            const res = await fetch(GET_PRODUCT_ATTRIBUTES_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ asin: product.asin })
+            });
+            if (res.ok) {
+                const raw = await res.json();
+                // Răspunsul vine ca array din n8n: [{ get_product_attributes_v2: { listing_data } }].
+                // Acceptăm și forma obiect / directă pentru robustețe.
+                const root = Array.isArray(raw) ? (raw[0] || {}) : (raw || {});
+                listingData = (root.get_product_attributes_v2 || root)?.listing_data || {};
+            }
+        } catch (e) {
+            console.warn('Nu s-au putut încărca atributele de listare:', e);
+        }
+
+        const requestBody = buildOpenSalesPreviewRequest({ product, details, listingData });
+
+        const response = await fetch(OPENSALES_PREVIEW_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey.trim()}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        const text = await response.text();
+        let parsed;
+        try { parsed = JSON.parse(text); } catch { parsed = text; }
+
+        showOpenSalesModal({ status: response.status, response: parsed, requestBody });
+    } catch (error) {
+        console.error('Eroare OpenSales preview:', error);
+        // Afișăm tot în modal ca userul să vadă inclusiv erorile de rețea/CORS.
+        showOpenSalesModal({
+            status: 0,
+            response: `Eroare la trimitere: ${error.message}\n\n(Dacă e o eroare CORS, serverul OpenSales trebuie să permită originea acestei aplicații.)`,
+            requestBody: '—'
+        });
     } finally {
         buttonElement.disabled = false;
         buttonElement.innerHTML = originalHTML;

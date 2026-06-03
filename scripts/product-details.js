@@ -588,6 +588,11 @@ const mappingState = {
     // competiție (templates.competition) recreează <select>-ul și șterge dataset-urile,
     // așa că populateCategorySelector trebuie să citească numele de aici, nu din DOM.
     categoryNames: Object.fromEntries(MARKETPLACES.map(m => [m.id, null])),
+    // variations[platform] = array de blocuri non-attribute venite din DB
+    // (ex: temu.variations = [{ parentSpecId, specId, specName }]). Frontend-ul NU
+    // le regenerează, deci le ținem aici ca să le re-emitem la save și să nu fie
+    // șterse din listing_data.
+    variations: Object.fromEntries(MARKETPLACES.map(m => [m.id, null])),
     searchTimers: {},
     // Când e true, schimbarea categoriei eMAG NU declanșează lookup automat
     // de mapări pe Trendyol/Temu. Folosit la restore din DB ca să respectăm
@@ -1119,6 +1124,10 @@ function collectAllAttributeValues() {
         const selectedOpt = selector?.selectedOptions?.[0];
         const categoryName = selectedOpt?.dataset?.name || selectedOpt?.textContent?.trim() || null;
         result[platform] = { categoryId: categoryId || null, categoryName: categoryName || null, attributes: values };
+        // Re-emitem variations (array, ex: Temu) păstrate din DB, ca să nu le ștergem la save.
+        if (mappingState.variations[platform]?.length) {
+            result[platform].variations = mappingState.variations[platform];
+        }
     });
     return result;
 }
@@ -1127,7 +1136,11 @@ function restoreAttributeValues(platform, values) {
     Object.entries(values).forEach(([attrId, value]) => {
         if (attrId === '__categoryId') return;
         const input = document.querySelector(`.attr-value-input[data-platform="${platform}"][data-attr-id="${attrId}"]`);
-        if (input) input.value = value;
+        if (!input) return;
+        // value poate fi:
+        //   - string: "Negru" (colectat din inputs, înainte de save)
+        //   - obiect: { value_name, value_id } (din DB, după enrichment SQL)
+        input.value = (value && typeof value === 'object') ? (value.value_name ?? '') : value;
     });
 }
 
@@ -1155,6 +1168,7 @@ export async function loadProductAttributesFromDB(asin) {
     mappingState.categories = Object.fromEntries(MARKETPLACES.map(m => [m.id, null]));
     mappingState.savedValues = Object.fromEntries(MARKETPLACES.map(m => [m.id, {}]));
     mappingState.categoryNames = Object.fromEntries(MARKETPLACES.map(m => [m.id, null]));
+    mappingState.variations = Object.fromEntries(MARKETPLACES.map(m => [m.id, null]));
     mappingState.searchTimers = {};
     mappingState._suppressEmagMappingLookup = false;
 
@@ -1166,7 +1180,12 @@ export async function loadProductAttributesFromDB(asin) {
         });
         if (!res.ok) return;
         const raw = await res.json();
-        const data = raw?.get_product_attributes_v2 || raw;
+        // Răspunsul poate veni în mai multe forme:
+        //   - array:  [{ get_product_attributes_v2: { listing_data } }]  (forma curentă din n8n)
+        //   - obiect: { get_product_attributes_v2: { listing_data } }
+        //   - direct: { listing_data }
+        const root = Array.isArray(raw) ? (raw[0] || {}) : (raw || {});
+        const data = root.get_product_attributes_v2 || root;
         const listingData = data?.listing_data || {};
         if (!Object.keys(listingData).length) return;
         // Suprimă lookup-ul automat de mapări cât timp restaurăm datele salvate —
@@ -1177,7 +1196,16 @@ export async function loadProductAttributesFromDB(asin) {
             const platforms = MARKETPLACES.map(m => m.id);
             for (const platform of platforms) {
                 const platformData = listingData[platform];
-                if (!platformData?.categoryId) continue;
+                if (!platformData) continue;
+                // Păstrăm variations (ex: Temu = [{ parentSpecId, specId, specName }])
+                // ca să le re-emitem la save — frontend-ul nu le regenerează.
+                // Acceptăm și forma veche singular (variation:{...}) pentru compatibilitate.
+                if (Array.isArray(platformData.variations)) {
+                    mappingState.variations[platform] = platformData.variations;
+                } else if (platformData.variation) {
+                    mappingState.variations[platform] = [platformData.variation];
+                }
+                if (!platformData.categoryId) continue;
                 // Salvăm valorile din DB indexate pe (platform, categoryId)
                 if (!mappingState.savedValues[platform]) mappingState.savedValues[platform] = {};
                 mappingState.savedValues[platform][platformData.categoryId] = platformData.attributes || {};

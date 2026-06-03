@@ -2,14 +2,15 @@
 import { state } from './state.js';
 import { renderView } from './viewRenderer.js';
 import { initGlobalListeners } from './lightbox.js';
-import { 
-    sendReadyToList, 
-    handleUploadSubmit, 
-    handleAsinUpdate, 
-    saveFinancialDetails, 
+import {
+    sendReadyToList,
+    handleUploadSubmit,
+    handleAsinUpdate,
+    saveFinancialDetails,
     generateNIR,
-    sendToBalance 
-} from './api.js'; 
+    sendToBalance,
+    sendOpenSalesPreview
+} from './api.js';
 import { AppState, fetchDataAndSyncState, fetchProductDetailsInBulk } from './data.js';
 import { templates } from './templates.js';
 import { GET_PALLETS_WEBHOOK_URL } from './constants.js';
@@ -374,6 +375,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await sendToBalance(state.currentCommandId, actionButton);
             }
 
+            if (action === 'opensales-preview') {
+                if (!state.currentCommandId) { alert('Selectați o comandă mai întâi.'); return; }
+                await sendOpenSalesPreview(state.currentCommandId, actionButton);
+            }
+
             // Navigare Înapoi
             if (action === 'back-to-comenzi') {
                 state.currentCommandId = null; state.currentManifestSKU = null; state.currentProductId = null; state.currentSearchQuery = '';
@@ -498,7 +504,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const cmdId = event.target.value;
             state.currentCommandId = cmdId;
             const container = document.getElementById('financiar-details-container');
-            const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn'].map(id => document.getElementById(id));
+            const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn', 'opensales-preview-btn'].map(id => document.getElementById(id));
             
             if (!cmdId) {
                 container.innerHTML = templates.financiarDetails(null);
