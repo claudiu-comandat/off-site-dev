@@ -499,9 +499,14 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
                         <span>Trimite în Balanță</span>
                     </button>
 
-                    <button id="opensales-preview-btn" data-action="opensales-preview" class="px-4 py-2 bg-teal-600 text-white font-bold rounded-lg hover:bg-teal-700 transition-colors flex items-center gap-2 shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed">
-                        <span class="material-icons text-sm">science</span>
-                        <span>Preview OpenSales</span>
+                    <button id="opensales-first-btn" data-action="opensales-first" class="px-4 py-2 bg-teal-600 text-white font-bold rounded-lg hover:bg-teal-700 transition-colors flex items-center gap-2 shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        <span class="material-icons text-sm">upload</span>
+                        <span>OpenSales (primul)</span>
+                    </button>
+
+                    <button id="opensales-all-btn" data-action="opensales-all" class="px-4 py-2 bg-teal-700 text-white font-bold rounded-lg hover:bg-teal-800 transition-colors flex items-center gap-2 shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        <span class="material-icons text-sm">cloud_upload</span>
+                        <span>OpenSales (toate)</span>
                     </button>
                 </div>
             </div>

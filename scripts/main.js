@@ -9,7 +9,8 @@ import {
     saveFinancialDetails,
     generateNIR,
     sendToBalance,
-    sendOpenSalesPreview
+    pushFirstAsinToOpenSales,
+    pushAllAsinsToOpenSales
 } from './api.js';
 import { AppState, fetchDataAndSyncState, fetchProductDetailsInBulk } from './data.js';
 import { templates } from './templates.js';
@@ -375,9 +376,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await sendToBalance(state.currentCommandId, actionButton);
             }
 
-            if (action === 'opensales-preview') {
+            if (action === 'opensales-first') {
                 if (!state.currentCommandId) { alert('Selectați o comandă mai întâi.'); return; }
-                await sendOpenSalesPreview(state.currentCommandId, actionButton);
+                await pushFirstAsinToOpenSales(state.currentCommandId, actionButton);
+            }
+
+            if (action === 'opensales-all') {
+                if (!state.currentCommandId) { alert('Selectați o comandă mai întâi.'); return; }
+                await pushAllAsinsToOpenSales(state.currentCommandId, actionButton);
             }
 
             // Navigare Înapoi
@@ -504,7 +510,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const cmdId = event.target.value;
             state.currentCommandId = cmdId;
             const container = document.getElementById('financiar-details-container');
-            const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn', 'opensales-preview-btn'].map(id => document.getElementById(id));
+            const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn', 'opensales-first-btn', 'opensales-all-btn'].map(id => document.getElementById(id));
             
             if (!cmdId) {
                 container.innerHTML = templates.financiarDetails(null);
