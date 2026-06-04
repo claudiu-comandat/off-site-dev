@@ -633,21 +633,59 @@ async function postAsinsToOpenSales(orderId, asins, buttonElement) {
     }
 }
 
+// Replică EXACTĂ a filtrului + sortării din templates.financiarProductTable, ca
+// butoanele OpenSales să folosească exact produsele VIZIBILE în lista "produse
+// recepționate", în aceeași ordine în care apar pe ecran.
+//   - vizibil: displayQty = bncondition + vgcondition + gcondition > 0
+//   - ordine: rândurile cu erori urcă primele (sort stabil), apoi restul
+// (Dacă logica din template se schimbă, actualizează și aici.)
+function visibleReceivedProducts(products, detailsMap) {
+    return (products || [])
+        .map(p => {
+            const displayQty = (p.bncondition || 0) + (p.vgcondition || 0) + (p.gcondition || 0);
+            const details = detailsMap[p.asin] || {};
+            const roData = details.other_versions?.['Romanian'] || {};
+            const title = (roData.title || '').trim();
+            const price = parseFloat(details.price) || 0;
+            const manifestSku = p.manifestsku || '';
+            let hasErrors = false;
+            if (!manifestSku) hasErrors = true;
+            if (!title || title === 'N/A' || title.length < 10 || title.length > 255) hasErrors = true;
+            if (price <= 0) hasErrors = true;
+            return { p, displayQty, hasErrors };
+        })
+        .filter(x => x.displayQty > 0)
+        .sort((a, b) => {
+            if (a.hasErrors && !b.hasErrors) return -1;
+            if (!a.hasErrors && b.hasErrors) return 1;
+            return 0;
+        })
+        .map(x => x.p);
+}
+
 /**
- * Buton "OpenSales (primul)": trimite DOAR primul ASIN din comanda selectată.
+ * Buton "OpenSales (primul)": trimite ASIN-ul PRIMULUI produs vizibil din lista
+ * "produse recepționate" (în ordinea afișată pe ecran).
  */
 export async function pushFirstAsinToOpenSales(commandId, buttonElement) {
     const command = AppState.getCommands().find(c => c.id === commandId);
     if (!command || !command.products?.length) { alert('Comanda nu are produse.'); return; }
-    await postAsinsToOpenSales(command.id, [command.products[0].asin], buttonElement);
+    const detailsMap = await fetchProductDetailsInBulk(command.products.map(p => p.asin));
+    const visible = visibleReceivedProducts(command.products, detailsMap);
+    if (!visible.length) { alert('Nu există produse vizibile în listă.'); return; }
+    await postAsinsToOpenSales(command.id, [visible[0].asin], buttonElement);
 }
 
 /**
- * Buton "OpenSales (toate)": trimite toate ASIN-urile (unice) din comanda selectată.
+ * Buton "OpenSales (toate)": trimite ASIN-urile (unice) ale TUTUROR produselor
+ * vizibile în lista "produse recepționate".
  */
 export async function pushAllAsinsToOpenSales(commandId, buttonElement) {
     const command = AppState.getCommands().find(c => c.id === commandId);
     if (!command || !command.products?.length) { alert('Comanda nu are produse.'); return; }
-    const asins = [...new Set(command.products.map(p => p.asin).filter(Boolean))];
+    const detailsMap = await fetchProductDetailsInBulk(command.products.map(p => p.asin));
+    const visible = visibleReceivedProducts(command.products, detailsMap);
+    if (!visible.length) { alert('Nu există produse vizibile în listă.'); return; }
+    const asins = [...new Set(visible.map(p => p.asin).filter(Boolean))];
     await postAsinsToOpenSales(command.id, asins, buttonElement);
 }

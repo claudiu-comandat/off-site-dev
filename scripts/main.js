@@ -341,7 +341,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (calculatedData) {
                         if (!state.financialCalculations) state.financialCalculations = {};
                         state.financialCalculations[commandId] = calculatedData;
-                        
+
+                        // Calculele există acum → activăm butoanele OpenSales.
+                        ['opensales-first-btn', 'opensales-all-btn'].forEach(id => {
+                            const b = document.getElementById(id);
+                            if (b) b.disabled = false;
+                        });
+
                         // Re-randare tabel cu datele calculate
                         const detailsContainer = document.getElementById('financiar-details-container');
                         const financialDataList = AppState.getFinancialData();
@@ -510,15 +516,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             const cmdId = event.target.value;
             state.currentCommandId = cmdId;
             const container = document.getElementById('financiar-details-container');
-            const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn', 'opensales-first-btn', 'opensales-all-btn'].map(id => document.getElementById(id));
-            
+            const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn'].map(id => document.getElementById(id));
+            const opensalesBtns = ['opensales-first-btn', 'opensales-all-btn'].map(id => document.getElementById(id));
+
             if (!cmdId) {
                 container.innerHTML = templates.financiarDetails(null);
                 btns.forEach(b => { if(b) b.disabled = true; });
+                opensalesBtns.forEach(b => { if(b) b.disabled = true; });
                 return;
             }
-            
+
             btns.forEach(b => { if(b) b.disabled = false; });
+            // OpenSales: active DOAR dacă au fost rulate calculele pentru această comandă.
+            const hasCalc = !!(state.financialCalculations && state.financialCalculations[cmdId]);
+            opensalesBtns.forEach(b => { if(b) b.disabled = !hasCalc; });
             container.innerHTML = '<div class="text-center p-8 text-gray-500">Se actualizează datele...</div>';
 
             const cmdData = AppState.getCommands().find(c => c.id === cmdId);
