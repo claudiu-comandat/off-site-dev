@@ -608,9 +608,11 @@ export async function generateNIR(commandId, buttonElement) {
 // Off-site trimite doar { asins: [...] }; n8n face fetch + asamblare + push.
 
 /**
- * POST { asins } către PUSH_TO_OPENSALES_URL. Feedback simplu prin alert.
+ * POST { orderId, asins } către PUSH_TO_OPENSALES_URL. Feedback simplu prin alert.
+ * orderId = numărul COMPLET al comenzii (command.id) — n8n îl folosește ca să știe
+ * din ce tabelă ia stocul.
  */
-async function postAsinsToOpenSales(asins, buttonElement) {
+async function postAsinsToOpenSales(orderId, asins, buttonElement) {
     const originalHTML = buttonElement.innerHTML;
     buttonElement.disabled = true;
     buttonElement.innerHTML = '<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div>';
@@ -618,7 +620,7 @@ async function postAsinsToOpenSales(asins, buttonElement) {
         const response = await fetch(PUSH_TO_OPENSALES_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ asins })
+            body: JSON.stringify({ orderId, asins })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         alert(`Trimis către OpenSales (n8n): ${asins.length} ASIN(uri).`);
@@ -637,7 +639,7 @@ async function postAsinsToOpenSales(asins, buttonElement) {
 export async function pushFirstAsinToOpenSales(commandId, buttonElement) {
     const command = AppState.getCommands().find(c => c.id === commandId);
     if (!command || !command.products?.length) { alert('Comanda nu are produse.'); return; }
-    await postAsinsToOpenSales([command.products[0].asin], buttonElement);
+    await postAsinsToOpenSales(command.id, [command.products[0].asin], buttonElement);
 }
 
 /**
@@ -647,5 +649,5 @@ export async function pushAllAsinsToOpenSales(commandId, buttonElement) {
     const command = AppState.getCommands().find(c => c.id === commandId);
     if (!command || !command.products?.length) { alert('Comanda nu are produse.'); return; }
     const asins = [...new Set(command.products.map(p => p.asin).filter(Boolean))];
-    await postAsinsToOpenSales(asins, buttonElement);
+    await postAsinsToOpenSales(command.id, asins, buttonElement);
 }
