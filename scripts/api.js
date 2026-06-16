@@ -94,15 +94,15 @@ export async function sendToBalance(commandId, buttonElement) {
             throw new Error("Nu există date valide de trimis.");
         }
 
-        // Calculăm data (1 a lunii trecute, ca la NIR)
+        // Calculăm data (1 a lunii curente, ca la NIR)
         const now = new Date();
-        const prevMonthFirstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        
+        const currMonthFirstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+
         // FIX: Construim manual data YYYY-MM-DD folosind ora locală
         // toISOString() convertește la UTC și poate da ziua precedentă din cauza fusului orar
-        const year = prevMonthFirstDay.getFullYear();
-        const month = String(prevMonthFirstDay.getMonth() + 1).padStart(2, '0');
-        const day = String(prevMonthFirstDay.getDate()).padStart(2, '0');
+        const year = currMonthFirstDay.getFullYear();
+        const month = String(currMonthFirstDay.getMonth() + 1).padStart(2, '0');
+        const day = String(currMonthFirstDay.getDate()).padStart(2, '0');
         const dateString = `${year}-${month}-${day}`;
 
         const payload = {
@@ -496,10 +496,10 @@ export async function generateNIR(commandId, buttonElement) {
         doc.setDrawColor(textColor);
         doc.line(14, 27, 196, 27); 
 
-        // Calcul Data (1 a lunii trecute)
+        // Calcul Data (1 a lunii curente)
         const now = new Date();
-        const prevMonthFirstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const nirDate = prevMonthFirstDay.toLocaleDateString('ro-RO');
+        const currMonthFirstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nirDate = currMonthFirstDay.toLocaleDateString('ro-RO');
 
         // Info Comandă
         doc.setFontSize(10);
