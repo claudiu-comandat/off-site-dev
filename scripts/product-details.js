@@ -372,6 +372,36 @@ export async function handleDescriptionRefresh(actionButton) {
 }
 
 
+// Fetch-ul comun folosit atât de butonul "Traduceți" per-produs, cât și de
+// traducerea în masă la nivel de comandă (translateAllMissingRoInOrder).
+async function sendTranslateRequest(asin, langCode, title, description, images, competitionPayload = {}) {
+    const response = await fetch(TRANSLATION_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            asin,
+            language: langCode,
+            title,
+            description,
+            images: cleanImages(images),
+            ...competitionPayload
+        })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+}
+
+// Aceleași praguri minime ca la handleTranslationInit, într-o formă compactă
+// (folosită doar de traducerea în masă, pentru a afișa un motiv de omitere per produs).
+function translationSkipReason(title, description, images) {
+    const descLen = (description || '').trim().length;
+    const titleLen = (title || '').trim().length;
+    const imgCount = cleanImages(images).length;
+    if (descLen < 50) return `descriere prea scurtă (${descLen}/50 car.)`;
+    if (titleLen < 10) return `titlu prea scurt (${titleLen}/10 car.)`;
+    if (imgCount < 3) return `doar ${imgCount} imagini (minim 3)`;
+    return null;
+}
+
 export async function handleTranslationInit(languageOption) {
     if (languageOption.hasAttribute('data-processing')) return;
 
@@ -421,34 +451,18 @@ export async function handleTranslationInit(languageOption) {
             competitionPayload[`competition_${i + 1}_title`] = c.name || '';
         });
 
-        const response = await fetch(TRANSLATION_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                asin,
-                language: langCode,
-                title: originTitle,
-                description: originDescription,
-                images: originImages,
-                ...competitionPayload
-            })
-        });
+        await sendTranslateRequest(asin, langCode, originTitle, originDescription, originImages, competitionPayload);
 
-        if (response.ok) {
-            languageOption.innerHTML = `
-                <div class="flex items-center justify-between text-green-600">
-                    <span>${langName}</span>
-                    <span class="material-icons text-sm">check</span>
-                </div>`;
-            setTimeout(() => {
-                alert(`Traducere pentru ${langCode.toUpperCase()} a fost inițiată cu succes.`);
-                languageOption.closest('.dropdown-menu')?.classList.add('hidden');
-                resetUI();
-            }, 500);
-        } else {
-            alert('Eroare la inițierea traducerii (Răspuns server invalid).');
+        languageOption.innerHTML = `
+            <div class="flex items-center justify-between text-green-600">
+                <span>${langName}</span>
+                <span class="material-icons text-sm">check</span>
+            </div>`;
+        setTimeout(() => {
+            alert(`Traducere pentru ${langCode.toUpperCase()} a fost inițiată cu succes.`);
+            languageOption.closest('.dropdown-menu')?.classList.add('hidden');
             resetUI();
-        }
+        }, 500);
     } catch (error) {
         console.error('Eroare Webhook:', error);
         alert('Eroare de rețea la inițierea traducerii.');
@@ -456,6 +470,74 @@ export async function handleTranslationInit(languageOption) {
     }
 }
 
+function progressRowHTML(asin, title) {
+    const safeTitle = (title || asin).replace(/"/g, '&quot;');
+    return `<div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-100 last:border-b-0" data-progress-asin="${asin}">
+        <span class="truncate flex-1 text-sm" title="${safeTitle}">${asin}</span>
+        <span class="progress-status text-xs text-gray-400 whitespace-nowrap">Așteaptă...</span>
+    </div>`;
+}
+
+function setProgressStatus(panel, asin, text, colorClass) {
+    const statusEl = panel.querySelector(`[data-progress-asin="${CSS.escape(asin)}"] .progress-status`);
+    if (statusEl) {
+        statusEl.textContent = text;
+        statusEl.className = `progress-status text-xs whitespace-nowrap ${colorClass}`;
+    }
+}
+
+/**
+ * Buton "Tradu RO lipsă" (nivel comandă): pornește exact traducerea RO
+ * (v2-multilang-generate) pentru fiecare produs din comandă care nu are încă
+ * tab RO — ca și cum ai apăsa manual "Traduceți" → RO pe fiecare, dar
+ * secvențial, câte 1 request/secundă, cu status live într-un panou sub buton.
+ */
+export async function translateAllMissingRoInOrder(commandId, buttonElement) {
+    const command = AppState.getCommands().find(c => c.id === commandId);
+    if (!command || !command.products?.length) { alert('Comanda nu are produse.'); return; }
+
+    const panel = document.getElementById('translate-ro-progress');
+    if (!panel) return;
+
+    const asins = [...new Set(command.products.map(p => p.asin).filter(Boolean))];
+    const detailsMap = await fetchProductDetailsInBulk(asins);
+
+    const targets = asins.filter(asin => {
+        const otherVersions = detailsMap[asin]?.other_versions || {};
+        return !Object.keys(otherVersions).some(k => k.toLowerCase() === 'romanian');
+    });
+
+    if (!targets.length) {
+        panel.innerHTML = `<div class="px-3 py-2 text-sm text-gray-500">Toate produsele au deja traducere RO.</div>`;
+        panel.classList.remove('hidden');
+        return;
+    }
+
+    panel.innerHTML = targets.map(asin => progressRowHTML(asin, detailsMap[asin]?.title)).join('');
+    panel.classList.remove('hidden');
+    buttonElement.disabled = true;
+
+    for (let i = 0; i < targets.length; i++) {
+        const asin = targets[i];
+        const details = detailsMap[asin] || {};
+        const skipReason = translationSkipReason(details.title, details.description, details.images);
+
+        if (skipReason) {
+            setProgressStatus(panel, asin, `Omis: ${skipReason}`, 'text-gray-400');
+        } else {
+            try {
+                await sendTranslateRequest(asin, 'ro', details.title, details.description, details.images);
+                setProgressStatus(panel, asin, `Lansat (${i + 1}/${targets.length})`, 'text-green-600');
+            } catch (error) {
+                setProgressStatus(panel, asin, `Eroare: ${error.message}`, 'text-red-600');
+            }
+        }
+
+        if (i < targets.length - 1) await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    buttonElement.disabled = false;
+}
 
 export async function handleImageTranslation(button) {
     const originalText = button.innerHTML;

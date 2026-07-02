@@ -598,6 +598,12 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
         <header class="sticky top-0 z-10 bg-white shadow-sm p-4 flex items-center space-x-4">
             <button data-action="back-to-comenzi" class="p-2 rounded-full hover:bg-gray-100"><span class="material-icons">arrow_back</span></button>
             <h1 class="text-xl font-bold text-gray-800 whitespace-nowrap">${command.name}</h1>
+            <div class="relative">
+                <button data-action="translate-missing-ro" data-command-id="${command.id}" class="flex items-center gap-1 px-3 py-2 text-sm font-semibold text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span class="material-icons text-base">translate</span> Tradu RO lipsă
+                </button>
+                <div id="translate-ro-progress" class="hidden absolute left-0 mt-2 w-80 max-h-96 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-xl z-20"></div>
+            </div>
             <div class="flex-1 relative">
                 <span class="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">search</span>
                 <input id="product-search-input" type="text" placeholder="Caută după titlu sau ASIN..." class="w-full pl-10 pr-4 py-2 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition" value="${state.currentSearchQuery}">

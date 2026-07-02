@@ -29,7 +29,8 @@ import {
     handleCategoryChange,
     handleAiFillAttributes,
     handleAllCategoriesToggle,
-    handleCategorySearch
+    handleCategorySearch,
+    translateAllMissingRoInOrder
 } from './product-details.js';
 
 // --- FUNCȚIE HELPER PENTRU PALEȚI ---
@@ -390,6 +391,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (action === 'opensales-all') {
                 if (!state.currentCommandId) { alert('Selectați o comandă mai întâi.'); return; }
                 await pushAllAsinsToOpenSales(state.currentCommandId, actionButton);
+            }
+
+            if (action === 'translate-missing-ro') {
+                const commandId = actionButton.dataset.commandId;
+                if (!commandId) { alert('Selectați o comandă mai întâi.'); return; }
+                await translateAllMissingRoInOrder(commandId, actionButton);
             }
 
             // Navigare Înapoi
