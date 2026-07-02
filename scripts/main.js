@@ -1,6 +1,6 @@
 // scripts/main.js
 import { state } from './state.js';
-import { renderView } from './viewRenderer.js';
+import { renderView, isRenderInFlight } from './viewRenderer.js';
 import { initGlobalListeners } from './lightbox.js';
 import {
     sendReadyToList,
@@ -15,6 +15,11 @@ import {
 import { AppState, fetchDataAndSyncState, fetchProductDetailsInBulk } from './data.js';
 import { templates } from './templates.js';
 import { GET_PALLETS_WEBHOOK_URL } from './constants.js';
+
+// Selectarea rapidă a altei comenzi în dropdown-ul Financiar, înainte ca fetch-ul
+// anterior să se termine, ar suprascrie ecranul cu date vechi (race condition) —
+// tokenul de mai jos garantează că doar cea mai recentă selecție ajunge pe ecran.
+let financiarSelectToken = 0;
 import {
     loadTabData,
     handleProductSave,
@@ -496,8 +501,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             state.currentSearchQuery = event.target.value;
             clearTimeout(state.searchTimeout);
             state.searchTimeout = setTimeout(async () => {
-                if (state.currentView === 'paleti') await renderView('paleti', { commandId: state.currentCommandId });
-                else if (state.currentView === 'produse') await renderView('produse', { commandId: state.currentCommandId, manifestSKU: state.currentManifestSKU });
+                // Deja e o randare în lucru (comanda tocmai se încarcă) — nu mai pornim
+                // un fetch în plus; cea în curs citește query-ul curent după await și
+                // aplică singură filtrul când termină.
+                if (isRenderInFlight()) return;
+                if (state.currentView === 'paleti') await renderView('paleti', { commandId: state.currentCommandId, silent: true });
+                else if (state.currentView === 'produse') await renderView('produse', { commandId: state.currentCommandId, manifestSKU: state.currentManifestSKU, silent: true });
                 const inp = document.getElementById('product-search-input');
                 if(inp) { inp.focus(); const v = inp.value; inp.value = ''; inp.value = v; }
             }, 300);
@@ -521,6 +530,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (event.target.id === 'financiar-command-select') {
             const cmdId = event.target.value;
+            const myToken = ++financiarSelectToken;
             state.currentCommandId = cmdId;
             const container = document.getElementById('financiar-details-container');
             const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn'].map(id => document.getElementById(id));
@@ -551,6 +561,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const detailsMap = await fetchProductDetailsInBulk(cmdData.products.map(p => p.asin));
             const calculatedData = state.financialCalculations ? state.financialCalculations[cmdId] : null;
 
+            if (myToken !== financiarSelectToken) return; // s-a selectat altă comandă între timp
             container.innerHTML = templates.financiarDetails(cmdData, financialData, detailsMap, palletsData, calculatedData);
         }
     });

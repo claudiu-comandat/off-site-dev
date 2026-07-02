@@ -6,6 +6,10 @@ export const TITLE_GENERATION_WEBHOOK_URL = `${BASE}/v2-ai-title`;
 export const ASIN_UPDATE_WEBHOOK_URL = `${BASE}/v2-register-product`;
 export const READY_TO_LIST_WEBHOOK_URL = `${BASE}/124682e2-5f91-4c0a-adf6-4cedf16c2c19`;
 export const TRANSLATION_WEBHOOK_URL = `${BASE}/v2-multilang-generate`;
+// Recuperare descriere origin lipsă (via APIGURU) — necesită ca n8n să returneze
+// { updates: [{asin, description}] } (SQL cu RETURNING), altfel off-site nu poate
+// ști pe care ASIN s-a reparat și cu ce descriere nouă.
+export const UPDATE_DESCRIPTION_WEBHOOK_URL = `${BASE}/update-description`;
 export const DESCRIPTION_GENERATION_WEBHOOK_URL = `${BASE}/v2-remake-description`;
 export const IMAGE_TRANSLATION_WEBHOOK_URL = `https://image-translation-module-torii-production.up.railway.app/v2-image-translation`;
 
@@ -18,7 +22,6 @@ export const CATEGORY_MAPPINGS_WEBHOOK_URL = `${BASE}/v2-category-mappings`;
 
 export const GET_FINANCIAL_WEBHOOK_URL = `${BASE}/get-financial`;
 export const SAVE_FINANCIAL_WEBHOOK_URL = `${BASE}/save-financial`;
-export const GENERATE_NIR_WEBHOOK_URL = `${BASE}/generate-nir`;
 export const GET_PALLETS_WEBHOOK_URL = `${BASE}/get-pallets`;
 export const INSERT_BALANCE_WEBHOOK_URL = `${BASE}/insert-balanta`;
 

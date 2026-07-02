@@ -5,6 +5,7 @@ import {
     COMPETITION_WEBHOOK_URL,
     TITLE_GENERATION_WEBHOOK_URL,
     TRANSLATION_WEBHOOK_URL,
+    UPDATE_DESCRIPTION_WEBHOOK_URL,
     IMAGE_TRANSLATION_WEBHOOK_URL,
     DESCRIPTION_GENERATION_WEBHOOK_URL,
     CATEGORY_ATTRIBUTES_WEBHOOK_URL,
@@ -374,16 +375,17 @@ export async function handleDescriptionRefresh(actionButton) {
 
 // Fetch-ul comun folosit atât de butonul "Traduceți" per-produs, cât și de
 // traducerea în masă la nivel de comandă (translateAllMissingRoInOrder).
-async function sendTranslateRequest(asin, langCode, title, description, images, competitionPayload = {}) {
+// NU trimitem title/description/images — workflow-ul n8n (v2-multilang-generate)
+// și le ia singur din products.translations după asin. ATENȚIE: pentru images,
+// asta presupune că "Trigger Image Translation1" a fost actualizat să citească
+// din Get English/Romanian Translation în loc de body.images — vezi recapitulare.
+async function sendTranslateRequest(asin, langCode, competitionPayload = {}) {
     const response = await fetch(TRANSLATION_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             asin,
             language: langCode,
-            title,
-            description,
-            images: cleanImages(images),
             ...competitionPayload
         })
     });
@@ -451,7 +453,7 @@ export async function handleTranslationInit(languageOption) {
             competitionPayload[`competition_${i + 1}_title`] = c.name || '';
         });
 
-        await sendTranslateRequest(asin, langCode, originTitle, originDescription, originImages, competitionPayload);
+        await sendTranslateRequest(asin, langCode, competitionPayload);
 
         languageOption.innerHTML = `
             <div class="flex items-center justify-between text-green-600">
@@ -471,7 +473,7 @@ export async function handleTranslationInit(languageOption) {
 }
 
 function progressRowHTML(asin, title) {
-    const safeTitle = (title || asin).replace(/"/g, '&quot;');
+    const safeTitle = escapeHtmlAttr(title || asin);
     return `<div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-100 last:border-b-0" data-progress-asin="${asin}">
         <span class="truncate flex-1 text-sm" title="${safeTitle}">${asin}</span>
         <span class="progress-status text-xs text-gray-400 whitespace-nowrap">Așteaptă...</span>
@@ -483,6 +485,27 @@ function setProgressStatus(panel, asin, text, colorClass) {
     if (statusEl) {
         statusEl.textContent = text;
         statusEl.className = `progress-status text-xs whitespace-nowrap ${colorClass}`;
+    }
+}
+
+// Cere n8n să recupereze descrierea origin lipsă/prea scurtă de la APIGURU și
+// s-o scrie în DB. Returnează noua descriere (dacă a fost găsită) sau null.
+// Necesită ca workflow-ul n8n de la UPDATE_DESCRIPTION_WEBHOOK_URL să răspundă
+// { updates: [{asin, description}] } — vezi nota de lângă constanta din constants.js.
+async function recoverMissingDescription(asin, oldDescription) {
+    try {
+        const response = await fetch(UPDATE_DESCRIPTION_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ missingProducts: [{ asin, productdescription: oldDescription || '' }] })
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        const updated = (data?.updates || []).find(u => u.asin === asin);
+        return updated?.description || null;
+    } catch (error) {
+        console.error(`Eroare recuperare descriere pentru ${asin}:`, error);
+        return null;
     }
 }
 
@@ -519,14 +542,25 @@ export async function translateAllMissingRoInOrder(commandId, buttonElement) {
 
     for (let i = 0; i < targets.length; i++) {
         const asin = targets[i];
-        const details = detailsMap[asin] || {};
+        let details = detailsMap[asin] || {};
+
+        if ((details.description || '').trim().length < 50) {
+            setProgressStatus(panel, asin, 'Descriere lipsă — se recuperează (APIGURU)...', 'text-blue-500');
+            const newDescription = await recoverMissingDescription(asin, details.description);
+            if (newDescription) {
+                details = { ...details, description: newDescription };
+                detailsMap[asin] = details;
+                AppState.setProductDetails(asin, details);
+            }
+        }
+
         const skipReason = translationSkipReason(details.title, details.description, details.images);
 
         if (skipReason) {
             setProgressStatus(panel, asin, `Omis: ${skipReason}`, 'text-gray-400');
         } else {
             try {
-                await sendTranslateRequest(asin, 'ro', details.title, details.description, details.images);
+                await sendTranslateRequest(asin, 'ro');
                 setProgressStatus(panel, asin, `Lansat (${i + 1}/${targets.length})`, 'text-green-600');
             } catch (error) {
                 setProgressStatus(panel, asin, `Eroare: ${error.message}`, 'text-red-600');
@@ -676,6 +710,10 @@ const mappingState = {
     // șterse din listing_data.
     variations: Object.fromEntries(MARKETPLACES.map(m => [m.id, null])),
     searchTimers: {},
+    // Gardă anti-race: dacă userul tastează, se opreste, tastează iar (al doilea
+    // fetch pornește), primul fetch poate răspunde ultimul și suprascrie rezultatele
+    // cu unele mai vechi. Tokenul per-platformă ține doar cel mai recent rezultat.
+    categorySearchTokens: {},
     // Când e true, schimbarea categoriei eMAG NU declanșează lookup automat
     // de mapări pe Trendyol/Temu. Folosit la restore din DB ca să respectăm
     // ce a salvat userul anterior.
@@ -1252,6 +1290,7 @@ export async function loadProductAttributesFromDB(asin) {
     mappingState.categoryNames = Object.fromEntries(MARKETPLACES.map(m => [m.id, null]));
     mappingState.variations = Object.fromEntries(MARKETPLACES.map(m => [m.id, null]));
     mappingState.searchTimers = {};
+    mappingState.categorySearchTokens = {};
     mappingState._suppressEmagMappingLookup = false;
 
     try {
@@ -1385,6 +1424,8 @@ export function handleAllCategoriesToggle(checkbox) {
 export function handleCategorySearch(input) {
     const platform = input.dataset.platform;
     clearTimeout(mappingState.searchTimers[platform]);
+    const myToken = (mappingState.categorySearchTokens[platform] || 0) + 1;
+    mappingState.categorySearchTokens[platform] = myToken;
     mappingState.searchTimers[platform] = setTimeout(async () => {
         const search = input.value.trim();
         try {
@@ -1395,8 +1436,10 @@ export function handleCategorySearch(input) {
             });
             if (!res.ok) return;
             const data = await res.json();
+            if (mappingState.categorySearchTokens[platform] !== myToken) return; // a pornit o căutare mai nouă
             renderCategoryResults(platform, data.categories || []);
         } catch {
+            if (mappingState.categorySearchTokens[platform] !== myToken) return;
             renderCategoryResults(platform, []);
         }
     }, 300);

@@ -4,7 +4,6 @@ import {
     READY_TO_LIST_WEBHOOK_URL,
     ASIN_UPDATE_WEBHOOK_URL,
     SAVE_FINANCIAL_WEBHOOK_URL,
-    GENERATE_NIR_WEBHOOK_URL,
     INSERT_BALANCE_WEBHOOK_URL,
     PUSH_TO_OPENSALES_URL
 } from './constants.js';
@@ -442,7 +441,7 @@ export async function generateNIR(commandId, buttonElement) {
             const unitCost = calcData.unitCost;
             const details = detailsMap[p.asin] || {};
             const rawTitle = (details.other_versions?.['Romanian']?.title || '').trim();
-            const roTitle = (rawTitle).normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Fără diacritice
+            const roTitle = removeDiacritics(rawTitle);
 
             const conditions = [
                 { qty: p.bncondition, codeSuffix: "CN" }, 
