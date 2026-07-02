@@ -490,8 +490,9 @@ function setProgressStatus(panel, asin, text, colorClass) {
 
 // Cere n8n să recupereze descrierea origin lipsă/prea scurtă de la APIGURU și
 // s-o scrie în DB. Returnează noua descriere (dacă a fost găsită) sau null.
-// Necesită ca workflow-ul n8n de la UPDATE_DESCRIPTION_WEBHOOK_URL să răspundă
-// { updates: [{asin, description}] } — vezi nota de lângă constanta din constants.js.
+// Necesită ca query-ul UPDATE din n8n să aibă "RETURNING t.asin, t.description" —
+// cu responseMode "lastNode", asta face ca webhook-ul să răspundă direct cu
+// [{asin, description}, ...] (array simplu, nu {updates: [...]}).
 async function recoverMissingDescription(asin, oldDescription) {
     try {
         const response = await fetch(UPDATE_DESCRIPTION_WEBHOOK_URL, {
@@ -500,8 +501,8 @@ async function recoverMissingDescription(asin, oldDescription) {
             body: JSON.stringify({ missingProducts: [{ asin, productdescription: oldDescription || '' }] })
         });
         if (!response.ok) return null;
-        const data = await response.json();
-        const updated = (data?.updates || []).find(u => u.asin === asin);
+        const updates = await response.json();
+        const updated = (Array.isArray(updates) ? updates : []).find(u => u.asin === asin);
         return updated?.description || null;
     } catch (error) {
         console.error(`Eroare recuperare descriere pentru ${asin}:`, error);
