@@ -661,13 +661,13 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
         }
 
         const cardsHTML = competitors.map(comp => {
-            const labelText = comp.promoLabel || comp.dealType;
+            const labelText = comp.promotion_label || comp.deal_type;
             const labelHTML = labelText
                 ? `<span class="absolute top-2 left-2 bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded">${labelText}</span>`
                 : '';
 
-            const oldPriceHTML = comp.oldPrice && comp.oldPrice !== comp.currentPrice
-                ? `<p class="text-sm text-gray-500 line-through">${comp.oldPrice} RON</p>`
+            const oldPriceHTML = comp.price_old && comp.price_old !== comp.price_current
+                ? `<p class="text-sm text-gray-500 line-through">${comp.price_old} RON</p>`
                 : '';
 
             return `
@@ -680,14 +680,14 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
                         <div>
                             <div class="flex items-center space-x-1 mb-1">
                                 ${renderCompetitionStars(comp.rating)}
-                                <span class="text-sm text-gray-500">${comp.reviews ? `(${comp.reviews})` : ''}</span>
+                                <span class="text-sm text-gray-500">${comp.reviews_count ? `(${comp.reviews_count})` : ''}</span>
                             </div>
                             <h3 class="font-semibold text-gray-800 text-sm h-20 overflow-hidden line-clamp-3">${comp.name}</h3>
                         </div>
                         <div>
                             <div class="mt-2 mb-3">
                                 ${oldPriceHTML}
-                                <p class="text-xl font-bold text-red-600">${comp.currentPrice ? comp.currentPrice + ' RON' : ''}</p>
+                                <p class="text-xl font-bold text-red-600">${comp.price_current ? comp.price_current + ' RON' : ''}</p>
                             </div>
                             <a href="${comp.url || '#'}" target="_blank" rel="noopener noreferrer"
                                class="block w-full text-center px-4 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors">
