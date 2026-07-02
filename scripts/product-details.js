@@ -510,11 +510,58 @@ async function recoverMissingDescription(asin, oldDescription) {
     }
 }
 
+// Procesare per-produs (recuperare descriere dacă e nevoie + traducere) — folosită
+// de translateAllMissingRoInOrder, rulată cu concurență constantă (runWithConcurrency).
+async function processTranslateTarget(asin, detailsMap, panel, position, total) {
+    let details = detailsMap[asin] || {};
+
+    if ((details.description || '').trim().length < 50) {
+        setProgressStatus(panel, asin, 'Descriere lipsă — se recuperează (APIGURU)...', 'text-blue-500');
+        const newDescription = await recoverMissingDescription(asin, details.description);
+        if (newDescription) {
+            details = { ...details, description: newDescription };
+            detailsMap[asin] = details;
+            AppState.setProductDetails(asin, details);
+        }
+    }
+
+    const skipReason = translationSkipReason(details.title, details.description, details.images);
+
+    if (skipReason) {
+        setProgressStatus(panel, asin, `Omis: ${skipReason}`, 'text-gray-400');
+        return;
+    }
+
+    try {
+        await sendTranslateRequest(asin, 'ro');
+        setProgressStatus(panel, asin, `Lansat (${position}/${total})`, 'text-green-600');
+    } catch (error) {
+        setProgressStatus(panel, asin, `Eroare: ${error.message}`, 'text-red-600');
+    }
+}
+
+const TRANSLATE_CONCURRENCY = 5;
+
+// Pool de "workeri": pornește CONCURRENCY task-uri, iar de îndată ce unul termină,
+// preia imediat următorul din listă — concurența rămâne constant la CONCURRENCY
+// (nu batch-uri fixe care așteaptă toate cele 5 înainte să pornească următoarele).
+async function runWithConcurrency(items, concurrency, worker) {
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+        while (nextIndex < items.length) {
+            const index = nextIndex++;
+            await worker(items[index], index);
+        }
+    });
+    await Promise.all(workers);
+}
+
 /**
  * Buton "Tradu RO lipsă" (nivel comandă): pornește exact traducerea RO
  * (v2-multilang-generate) pentru fiecare produs din comandă care nu are încă
- * tab RO — ca și cum ai apăsa manual "Traduceți" → RO pe fiecare, dar
- * secvențial, câte 1 request/secundă, cu status live într-un panou sub buton.
+ * tab RO — ca și cum ai apăsa manual "Traduceți" → RO pe fiecare, dar câte
+ * TRANSLATE_CONCURRENCY produse simultan constant, cu status live într-un
+ * panou sub buton.
  */
 export async function translateAllMissingRoInOrder(commandId, buttonElement) {
     const command = AppState.getCommands().find(c => c.id === commandId);
@@ -541,35 +588,9 @@ export async function translateAllMissingRoInOrder(commandId, buttonElement) {
     panel.classList.remove('hidden');
     buttonElement.disabled = true;
 
-    for (let i = 0; i < targets.length; i++) {
-        const asin = targets[i];
-        let details = detailsMap[asin] || {};
-
-        if ((details.description || '').trim().length < 50) {
-            setProgressStatus(panel, asin, 'Descriere lipsă — se recuperează (APIGURU)...', 'text-blue-500');
-            const newDescription = await recoverMissingDescription(asin, details.description);
-            if (newDescription) {
-                details = { ...details, description: newDescription };
-                detailsMap[asin] = details;
-                AppState.setProductDetails(asin, details);
-            }
-        }
-
-        const skipReason = translationSkipReason(details.title, details.description, details.images);
-
-        if (skipReason) {
-            setProgressStatus(panel, asin, `Omis: ${skipReason}`, 'text-gray-400');
-        } else {
-            try {
-                await sendTranslateRequest(asin, 'ro');
-                setProgressStatus(panel, asin, `Lansat (${i + 1}/${targets.length})`, 'text-green-600');
-            } catch (error) {
-                setProgressStatus(panel, asin, `Eroare: ${error.message}`, 'text-red-600');
-            }
-        }
-
-        if (i < targets.length - 1) await new Promise(resolve => setTimeout(resolve, 1000));
-    }
+    await runWithConcurrency(targets, TRANSLATE_CONCURRENCY, (asin, index) =>
+        processTranslateTarget(asin, detailsMap, panel, index + 1, targets.length)
+    );
 
     buttonElement.disabled = false;
 }
