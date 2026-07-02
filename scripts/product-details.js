@@ -540,7 +540,7 @@ async function processTranslateTarget(asin, detailsMap, panel, position, total) 
     }
 }
 
-const TRANSLATE_CONCURRENCY = 5;
+const TRANSLATE_CONCURRENCY = 10;
 
 // Pool de "workeri": pornește CONCURRENCY task-uri, iar de îndată ce unul termină,
 // preia imediat următorul din listă — concurența rămâne constant la CONCURRENCY
