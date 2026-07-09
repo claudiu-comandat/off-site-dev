@@ -184,16 +184,19 @@ export const templates = {
 financiarProductTable: (products, detailsMap, commandId, calculatedData = null) => {
         if (!products || products.length === 0) return '';
 
-        const processedProducts = products.map(p => {
+        // Un singur loop pentru build+filter (în loc de .map().filter() separate) — sortarea
+        // rămâne un pas separat (are nevoie de array-ul complet), la fel ca înainte.
+        const processedProducts = [];
+        for (const p of products) {
             // Formula: Total Recepționat - Broken
             const totalReceived = (p.bncondition || 0) + (p.vgcondition || 0) + (p.gcondition || 0) + (p.broken || 0);
             const displayQty = totalReceived - (p.broken || 0);
 
-            if (displayQty <= 0) return null;
+            if (displayQty <= 0) continue;
 
             const details = detailsMap[p.asin] || {};
             const roData = details.other_versions?.['Romanian'] || {};
-            
+
             const title = (roData.title || '').trim();
             const mainImage = (roData.images && roData.images[0]) ? roData.images[0] : ((details.images && details.images[0]) ? details.images[0] : '');
             const price = parseFloat(details.price) || 0;
@@ -211,7 +214,7 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
             // Date calculate
             const calc = calculatedData ? calculatedData[p.uniqueId] : null;
 
-            return {
+            processedProducts.push({
                 ...p,
                 displayTitle: title || 'N/A',
                 displayImage: mainImage,
@@ -223,8 +226,8 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
                 calcPercent: calc ? calc.percentDisplay : '-',
                 calcUnitCost: calc ? calc.unitCost.toFixed(2) : '-',
                 calcTotalCost: calc ? calc.totalCost.toFixed(2) : '-'
-            };
-        }).filter(p => p !== null);
+            });
+        }
 
         processedProducts.sort((a, b) => {
             if (a.hasErrors && !b.hasErrors) return -1;
@@ -232,14 +235,11 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
             return 0;
         });
 
-        // --- CALCUL TOTAL FINAL ---
-        const totalSum = processedProducts.reduce((sum, p) => {
-            const val = parseFloat(p.calcTotalCost);
-            return sum + (isNaN(val) ? 0 : val);
-        }, 0);
-        // --------------------------
-
+        // Total + rânduri într-un singur .map() (în loc de .reduce() separat + .map()).
+        let totalSum = 0;
         const rowsHTML = processedProducts.map(p => {
+            const val = parseFloat(p.calcTotalCost);
+            totalSum += isNaN(val) ? 0 : val;
             const rowClass = p.hasErrors ? 'bg-red-50 hover:bg-red-100 border-l-4 border-red-500' : 'hover:bg-gray-50';
             
             let warningIcon = '';
@@ -507,6 +507,11 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
                     <button id="opensales-all-btn" data-action="opensales-all" disabled class="px-4 py-2 bg-teal-700 text-white font-bold rounded-lg hover:bg-teal-800 transition-colors flex items-center gap-2 shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed">
                         <span class="material-icons text-sm">cloud_upload</span>
                         <span>OpenSales (toate)</span>
+                    </button>
+
+                    <button id="opensales-prelist-btn" data-action="opensales-prelist" disabled class="px-4 py-2 bg-amber-600 text-white font-bold rounded-lg hover:bg-amber-700 transition-colors flex items-center gap-2 shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        <span class="material-icons text-sm">bolt</span>
+                        <span>Prelistare eMAG</span>
                     </button>
                 </div>
             </div>

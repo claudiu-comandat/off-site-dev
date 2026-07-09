@@ -14,5 +14,10 @@ export const state = {
     currentView: 'comenzi',
     previousView: null,
     searchTimeout: null,
-    financialCalculations: {}
+    financialCalculations: {},
+    // Incrementat de renderView() la fiecare navigare. Funcțiile async care mai au
+    // treabă după un `await` (loadProductAttributesFromDB, fetchAndRenderCompetition,
+    // fetchAndRenderAttributes) compară tokenul lor cu acesta ca să abandoneze dacă
+    // între timp s-a deschis alt produs/view.
+    renderToken: 0
 };

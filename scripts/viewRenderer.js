@@ -18,9 +18,11 @@ export function setActiveView(viewId) {
 
 // Randările sunt async (fetch-uri) și pot suprapune — click pe o comandă +
 // tastat imediat în search declanșează două apeluri concurente ale funcției.
-// renderToken garantează că doar rezultatul CELEI MAI RECENTE randări ajunge
-// pe ecran, indiferent care await se termină ultimul.
-let renderToken = 0;
+// state.renderToken garantează că doar rezultatul CELEI MAI RECENTE randări ajunge
+// pe ecran, indiferent care await se termină ultimul. E ținut în state.js (nu într-o
+// variabilă locală) ca product-details.js să-l poată citi și abandona propriile
+// apeluri async (loadProductAttributesFromDB, fetchAndRenderCompetition,
+// fetchAndRenderAttributes) când userul a navigat deja la alt produs.
 let renderInFlight = false;
 
 // Folosit de search-bar ca să nu mai pornească un fetch nou cât timp unul e deja
@@ -31,7 +33,7 @@ export function isRenderInFlight() {
 }
 
 export async function renderView(viewId, context = {}) {
-    const myRenderToken = ++renderToken;
+    const myRenderToken = ++state.renderToken;
     renderInFlight = true;
 
     if (viewId !== state.currentView) {
@@ -57,20 +59,19 @@ export async function renderView(viewId, context = {}) {
                 html = templates.import();
                 break;
             case 'financiar':
-                // 1. Sincronizăm lista de comenzi
-                await fetchDataAndSyncState();
-                
-                // 2. FORȚĂM actualizarea datelor financiare de fiecare dată când intrăm pe pagină
-                // Am eliminat verificarea de cache (if !storedData) pentru a cere mereu datele proaspete
-                mainContent.innerHTML = `<div class="p-8 text-center text-gray-500">Se actualizează datele financiare...</div>`;
-                await fetchFinancialData();
+                // Sincronizarea comenzilor și actualizarea datelor financiare sunt independente
+                // una de alta — le rulăm în paralel în loc de secvențial, ca să nu adăugăm un
+                // round-trip întreg la timpul de randare al tab-ului.
+                // Am eliminat verificarea de cache pentru datele financiare (se cer mereu proaspete).
+                mainContent.innerHTML = `<div class="p-8 text-center text-gray-500">Se actualizează datele...</div>`;
+                await Promise.all([fetchDataAndSyncState(), fetchFinancialData()]);
 
-                // 3. Randăm shell-ul (dropdown + container gol pt detalii)
+                // Randăm shell-ul (dropdown + container gol pt detalii)
                 html = templates.financiar(AppState.getCommands());
                 break;
 
             case 'paleti':
-                const commandForPaleti = AppState.getCommands().find(c => c.id === context.commandId);
+                const commandForPaleti = AppState.getCommandById(context.commandId);
                 if (commandForPaleti) {
                     if (!context.silent) {
                         mainContent.innerHTML = `
@@ -105,7 +106,7 @@ export async function renderView(viewId, context = {}) {
                 }
                 break;
             case 'produse':
-                const command = AppState.getCommands().find(c => c.id === context.commandId);
+                const command = AppState.getCommandById(context.commandId);
                 if (command && context.manifestSKU) {
                      if (!context.silent) mainContent.innerHTML = `<div class="p-8 text-center text-gray-500">Se încarcă detaliile produselor...</div>`;
 
@@ -134,11 +135,8 @@ export async function renderView(viewId, context = {}) {
             case 'produs-detaliu':
                  mainContent.innerHTML = `<div class="p-8 text-center text-gray-500">Se încarcă detaliile produsului...</div>`;
                 state.competitionDataCache = null;
-                const cmd = AppState.getCommands().find(c => c.id === context.commandId);
-                foundProduct = null; 
-                if (cmd) {
-                   foundProduct = cmd.products.find(p => p.uniqueId === context.productId);
-                }
+                const cmd = AppState.getCommandById(context.commandId);
+                foundProduct = cmd ? AppState.getProductByUniqueId(context.commandId, context.productId) : null;
 
                 if (foundProduct) {
                     const detailsMap = await fetchProductDetailsInBulk([foundProduct.asin]);
@@ -173,7 +171,7 @@ export async function renderView(viewId, context = {}) {
 
     // O randare mai nouă a pornit deja (altă comandă/tab/căutare) — abandonăm
     // rezultatul acesteia ca să nu suprascrie ceva mai proaspăt deja pe ecran.
-    if (myRenderToken !== renderToken) return;
+    if (myRenderToken !== state.renderToken) return;
     renderInFlight = false;
 
     if (typeof html !== 'string') {

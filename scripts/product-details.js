@@ -58,7 +58,7 @@ export function getCurrentImagesArray() {
     return [...state.editedProductData.other_versions[key].images];
 }
 
-export function setCurrentImagesArray(imagesArray) {
+function setCurrentImagesArray(imagesArray) {
     const key = state.activeVersionKey;
     if (key === 'origin') {
         state.editedProductData.images = imagesArray;
@@ -174,6 +174,7 @@ export function loadTabData(versionKey) {
 export async function fetchAndRenderCompetition(asin) {
     const container = document.getElementById('competition-container');
     if (!container) return;
+    const myRenderToken = state.renderToken;
     state.competitionDataCache = null;
 
     // Init idempotent — leagă drag-reorder pe elementele care tocmai au fost montate
@@ -192,12 +193,15 @@ export async function fetchAndRenderCompetition(asin) {
         if (!response.ok) throw new Error('Eroare la preluarea datelor de competiție');
 
         const rawData = await response.json();
+        if (myRenderToken !== state.renderToken) return; // s-a navigat la alt produs — abandonăm
+
         const data = rawData?.get_competition_v2 || rawData || {};
         state.competitionDataCache = data;
         container.innerHTML = templates.competition(data);
         populateCategorySelector();
         populateTemuCategorySelector();
     } catch (error) {
+        if (myRenderToken !== state.renderToken) return;
         console.error('Eroare competiție:', error);
         container.innerHTML = `<div class="p-8 text-center text-red-500">Nu s-au putut încărca produsele concurente.</div>`;
     }
@@ -220,10 +224,14 @@ export async function saveProductCoreData() {
             }
         }
 
-        const payloadForServer = JSON.parse(JSON.stringify(localCopy));
+        // payloadForServer doar re-cheiază other_versions (nume limbă -> cod limbă) și e
+        // trimis o singură dată la server — nu are nevoie de propriul deep clone complet,
+        // un shallow copy + un obiect nou pentru other_versions e suficient (localCopy
+        // rămâne intact, ca să devină noul state.editedProductData mai jos).
+        const payloadForServer = { ...localCopy };
         if (payloadForServer.other_versions) {
             const converted = {};
-            for (const [langName, langData] of Object.entries(payloadForServer.other_versions)) {
+            for (const [langName, langData] of Object.entries(localCopy.other_versions)) {
                 const langCode = (languageNameToCodeMap[langName.toLowerCase()] || langName).toLowerCase();
                 converted[langCode] = langData;
             }
@@ -564,7 +572,7 @@ async function runWithConcurrency(items, concurrency, worker) {
  * panou sub buton.
  */
 export async function translateAllMissingRoInOrder(commandId, buttonElement) {
-    const command = AppState.getCommands().find(c => c.id === commandId);
+    const command = AppState.getCommandById(commandId);
     if (!command || !command.products?.length) { alert('Comanda nu are produse.'); return; }
 
     const panel = document.getElementById('translate-ro-progress');
@@ -736,6 +744,11 @@ const mappingState = {
     // fetch pornește), primul fetch poate răspunde ultimul și suprascrie rezultatele
     // cu unele mai vechi. Tokenul per-platformă ține doar cel mai recent rezultat.
     categorySearchTokens: {},
+    // Gardă anti-race pentru handleCategoryChange: două schimbări rapide de categorie
+    // pe aceeași platformă (click dublu, sau applyCategoryMappings care pornește cât
+    // timp userul schimbă manual) pot rezolva în ordine inversă. Incrementat la fiecare
+    // apel; fetchAndRenderAttributes verifică tokenul înainte să scrie în DOM.
+    changeTokens: Object.fromEntries(MARKETPLACES.map(m => [m.id, 0])),
     // Când e true, schimbarea categoriei eMAG NU declanșează lookup automat
     // de mapări pe Trendyol/Temu. Folosit la restore din DB ca să respectăm
     // ce a salvat userul anterior.
@@ -750,7 +763,7 @@ document.addEventListener('click', () => {
     document.querySelectorAll('.attr-dropdown-list').forEach(l => l.classList.add('hidden'));
 });
 
-export function populateCategorySelector() {
+function populateCategorySelector() {
     const categories = [...(state.competitionDataCache?.suggested_categories || [])];
     categories.sort((a, b) => (b.count || 0) - (a.count || 0));
     const selector = document.getElementById('category-selector-emag');
@@ -829,7 +842,7 @@ export function populateCategorySelector() {
 // și sunt returnate de v2-competition în `temu_recommendations` (deja îmbogățite cu
 // nume RO/EN prin JOIN pe catalogs.categories). Structura item: { categoryId, categoryName, nameRo, isBest }.
 // NU depind de categoria eMAG aleasă — de aceea sunt excluse din applyCategoryMappings.
-export function populateTemuCategorySelector() {
+function populateTemuCategorySelector() {
     const list = [...(state.competitionDataCache?.temu_recommendations || [])];
     const selector = document.getElementById('category-selector-temu');
     if (!selector) return;
@@ -899,7 +912,10 @@ export async function handleCategoryChange(platform, categoryId) {
 
     const el = document.getElementById(`${platform}-attributes`);
     if (el) el.innerHTML = '<p class="text-xs text-gray-400 italic">Se încarcă...</p>';
-    const fetchResult = await fetchAndRenderAttributes(platform, categoryId);
+    const myChangeToken = ++mappingState.changeTokens[platform];
+    const myRenderToken = state.renderToken;
+    const fetchResult = await fetchAndRenderAttributes(platform, categoryId, myChangeToken, myRenderToken);
+    if (myChangeToken !== mappingState.changeTokens[platform] || myRenderToken !== state.renderToken) return; // o schimbare mai nouă a preluat deja acest platform
 
     // Dacă webhook-ul a rezolvat un alt ID de categorie (ex: căutare după nume),
     // actualizăm mappingState cu ID-ul rezolvat și salvăm valorile sub cheia corectă.
@@ -1015,9 +1031,12 @@ function populateMappedCategoryDropdown(platform, list, selectedId = null) {
     if (targetId) selector.value = targetId;
 }
 
-async function fetchAndRenderAttributes(platform, categoryId) {
+async function fetchAndRenderAttributes(platform, categoryId, myChangeToken, myRenderToken) {
     const container = document.getElementById(`${platform}-attributes`);
     if (!container) return null;
+    const isStale = () =>
+        (myChangeToken !== undefined && myChangeToken !== mappingState.changeTokens[platform]) ||
+        (myRenderToken !== undefined && myRenderToken !== state.renderToken);
     // Trimitem și numele categoriei (ENGLEZĂ, oficial din catalogs) ca fallback
     // pentru căutarea după nume în DB. Dacă option-ul are data-name (cazul search bilingv),
     // îl folosim pe acela — textContent poate fi "RO (EN)" sau alte variante afișate.
@@ -1044,6 +1063,7 @@ async function fetchAndRenderAttributes(platform, categoryId) {
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
+        if (isStale()) return null; // o schimbare mai nouă (sau alt produs) a preluat deja acest slot
         const attrs = Array.isArray(data.attributes) ? data.attributes : [];
         // Populăm cache-ul de valori pentru dropdown-uri
         attrValuesCache.clear();
@@ -1063,6 +1083,7 @@ return {
     resolvedCategoryNameRo: data.resolvedCategoryNameRo || data.resolved_category_name_ro || null
 };
     } catch {
+        if (isStale()) return null;
         container.innerHTML = '<p class="text-xs text-red-400 italic">Caracteristicile vor fi disponibile după configurarea webhook-ului</p>';
         return null;
     }
@@ -1257,12 +1278,24 @@ function collectAttributeValuesForPlatform(platform) {
 }
 
 function collectAllAttributeValues() {
+    // Un singur querySelectorAll peste tot DOM-ul + grupare în memorie pe platformă,
+    // în loc de un querySelectorAll separat per marketplace (collectAttributeValuesForPlatform
+    // rămâne neschimbată — e folosită și separat, per-platformă, în handleCategoryChange).
+    const byPlatform = {};
+    document.querySelectorAll('.attr-value-input').forEach(input => {
+        if (!input.value) return;
+        const platform = input.dataset.platform;
+        (byPlatform[platform] || (byPlatform[platform] = {}))[input.dataset.attrId] = input.value;
+    });
+
     const result = {};
     MARKETPLACES.forEach(mp => {
         const platform = mp.id;
-        const values = collectAttributeValuesForPlatform(platform);
-        const categoryId = mappingState.categories[platform];
+        const values = byPlatform[platform] || {};
         const selector = document.getElementById(`category-selector-${platform}`);
+        if (selector?.value) values.__categoryId = selector.value;
+
+        const categoryId = mappingState.categories[platform];
         const selectedOpt = selector?.selectedOptions?.[0];
         const categoryName = selectedOpt?.dataset?.name || selectedOpt?.textContent?.trim() || null;
         result[platform] = { categoryId: categoryId || null, categoryName: categoryName || null, attributes: values };
@@ -1307,12 +1340,14 @@ export async function loadProductAttributesFromDB(asin) {
     // Produs A salvat cu Temu=500, apoi deschis Produs B care NU are Temu salvat;
     // fără reset, categories.temu rămâne 500 din A și la save-ul lui B se trimite
     // accidental Temu=500 deși user-ul nu a ales nimic pe Temu pentru B.
+    const myRenderToken = state.renderToken;
     mappingState.categories = Object.fromEntries(MARKETPLACES.map(m => [m.id, null]));
     mappingState.savedValues = Object.fromEntries(MARKETPLACES.map(m => [m.id, {}]));
     mappingState.categoryNames = Object.fromEntries(MARKETPLACES.map(m => [m.id, null]));
     mappingState.variations = Object.fromEntries(MARKETPLACES.map(m => [m.id, null]));
     mappingState.searchTimers = {};
     mappingState.categorySearchTokens = {};
+    mappingState.changeTokens = Object.fromEntries(MARKETPLACES.map(m => [m.id, 0]));
     mappingState._suppressEmagMappingLookup = false;
 
     try {
@@ -1321,8 +1356,10 @@ export async function loadProductAttributesFromDB(asin) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ asin })
         });
+        if (myRenderToken !== state.renderToken) return; // s-a navigat la alt produs cât timp așteptam răspunsul
         if (!res.ok) return;
         const raw = await res.json();
+        if (myRenderToken !== state.renderToken) return;
         // Răspunsul poate veni în mai multe forme:
         //   - array:  [{ get_product_attributes_v2: { listing_data } }]  (forma curentă din n8n)
         //   - obiect: { get_product_attributes_v2: { listing_data } }
@@ -1372,7 +1409,9 @@ export async function loadProductAttributesFromDB(asin) {
                     }
                     selector.value = platformData.categoryId;
                 }
-                const fetchResult = await fetchAndRenderAttributes(platform, platformData.categoryId);
+                const myChangeToken = ++mappingState.changeTokens[platform];
+                const fetchResult = await fetchAndRenderAttributes(platform, platformData.categoryId, myChangeToken, myRenderToken);
+                if (myRenderToken !== state.renderToken) return; // alt produs e deja pe ecran — abandonăm restul restaurării
                 // Aplică ID-ul și numele rezolvate de backend (name-based lookup când ID-ul din
                 // competiție eMAG e greșit dar numele e corect → backend găsește ID-ul canonical).
                 if (fetchResult) {
@@ -1424,6 +1463,7 @@ export async function loadProductAttributesFromDB(asin) {
         const otherPlatforms = MARKETPLACES.map(m => m.id).filter(id => id !== 'emag');
         const missingTarget = emagId && otherPlatforms.some(p => !listingData[p]?.categoryId);
         if (missingTarget) {
+            if (myRenderToken !== state.renderToken) return;
             await applyCategoryMappings(String(emagId));
         }
     } catch (err) {

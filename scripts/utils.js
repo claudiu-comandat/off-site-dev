@@ -26,25 +26,23 @@ export function fuzzySearch(query, target) {
     if (!query) return true;
     if (!target) return false;
 
-    const queryWords = query.toLowerCase().split(' ').filter(w => w.length > 0);
     const targetText = target.toLowerCase();
-    const targetWords = targetText.split(' ').filter(w => w.length > 0);
-
-    targetWords.push(targetText);
+    const queryWords = query.toLowerCase().split(' ').filter(w => w.length > 0);
 
     return queryWords.every(queryWord => {
-        return targetWords.some(targetWord => {
-            const distance = getLevenshteinDistance(queryWord, targetWord);
+        // Calea rapidă: substring simplu, O(n), acoperă marea majoritate a căutărilor
+        // fără să atingă Levenshtein deloc.
+        if (targetText.includes(queryWord)) return true;
 
-            let tolerance = 0;
-            if (queryWord.length <= 2) tolerance = 0;
-            else if (queryWord.length <= 4) tolerance = 1;
-            else tolerance = 2;
+        let tolerance = 0;
+        if (queryWord.length <= 2) tolerance = 0;
+        else if (queryWord.length <= 4) tolerance = 1;
+        else tolerance = 2;
 
-            if (targetWord.includes(queryWord)) {
-                return true;
-            }
-            return distance <= tolerance;
-        });
+        // Sub 3 caractere nu primim toleranță la typo — fără substring match, e ratare sigură.
+        if (tolerance === 0) return false;
+
+        const targetWords = targetText.split(' ').filter(w => w.length > 0);
+        return targetWords.some(targetWord => getLevenshteinDistance(queryWord, targetWord) <= tolerance);
     });
 }

@@ -30,6 +30,11 @@ export const INSERT_BALANCE_WEBHOOK_URL = `${BASE}/insert-balanta`;
 // trimite mai departe către serverul OpenSales.
 export const PUSH_TO_OPENSALES_URL = `${BASE}/push-to-opensales`;
 
+// Prelistare eMAG — payload minim, fără categorie/caracteristici (POST /import/products/prelist
+// pe OpenSales). eMAG atribuie categoria automat la validare; categoria + caracteristicile
+// primite înapoi ajung în listing_data.emag prin webhook-ul separat `prelist-validat`.
+export const PRELIST_TO_OPENSALES_URL = `${BASE}/push-to-opensales-prelist`;
+
 export const languages = {
     'bg': 'Bulgarian', 'de': 'German', 'ro': 'Romanian', 'hu': 'Hungarian',
     'el': 'Greek', 'sq': 'Albanian', 'be': 'Belarusian', 'bs': 'Bosnian',

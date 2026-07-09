@@ -6,6 +6,31 @@ const PRODUCT_UPDATE_URL = 'https://automatizare.comandat.ro/webhook/v2-update-p
 
 const productCache = {};
 
+// Cache în memorie peste sessionStorage — commands/financialData erau re-parsate din
+// JSON la FIECARE apel (13+ call site-uri, adesea de 2 ori consecutiv în același
+// handler). Invalidat doar în setCommands()/setFinancialData(), la fel cum
+// productCache e deja invalidat explicit.
+let commandsCache = null;
+let commandsById = null;
+let productsByCommand = null; // Map<commandId, Map<uniqueId, product>>
+let financialCache = null;
+
+function indexCommands(commands) {
+    commandsById = new Map();
+    productsByCommand = new Map();
+    commands.forEach(c => {
+        commandsById.set(c.id, c);
+        productsByCommand.set(c.id, new Map((c.products || []).map(p => [p.uniqueId, p])));
+    });
+}
+
+function ensureCommandsCache() {
+    if (commandsCache === null) {
+        commandsCache = JSON.parse(sessionStorage.getItem('liveCommandsData') || '[]');
+        indexCommands(commandsCache);
+    }
+}
+
 const enforceHttps = (url) =>
     url && typeof url === 'string' && url.startsWith('http://')
         ? url.replace(/^http:\/\//i, 'https://')
@@ -15,8 +40,19 @@ const sanitizeImages = (images) =>
     Array.isArray(images) ? images.map(enforceHttps) : [];
 
 export const AppState = {
-    getCommands: () => JSON.parse(sessionStorage.getItem('liveCommandsData') || '[]'),
-    setCommands: (commands) => sessionStorage.setItem('liveCommandsData', JSON.stringify(commands)),
+    getCommands: () => { ensureCommandsCache(); return commandsCache; },
+    setCommands: (commands) => {
+        commandsCache = commands;
+        indexCommands(commands);
+        sessionStorage.setItem('liveCommandsData', JSON.stringify(commands));
+    },
+    // O(1) în loc de .find() liniar peste array-ul (re)parsat de fiecare dată.
+    getCommandById: (id) => { ensureCommandsCache(); return commandsById.get(id) || null; },
+    // Scopat pe commandId (nu global) — uniqueId nu e garantat unic ÎNTRE comenzi diferite.
+    getProductByUniqueId: (commandId, uniqueId) => {
+        ensureCommandsCache();
+        return productsByCommand.get(commandId)?.get(uniqueId) || null;
+    },
 
     getProductDetails: (asin) => productCache[asin] || null,
     setProductDetails: (asin, data) => { productCache[asin] = data; },
@@ -27,8 +63,16 @@ export const AppState = {
         }
     },
 
-    getFinancialData: () => JSON.parse(sessionStorage.getItem('financialData') || '[]'),
-    setFinancialData: (data) => sessionStorage.setItem('financialData', JSON.stringify(data)),
+    getFinancialData: () => {
+        if (financialCache === null) {
+            financialCache = JSON.parse(sessionStorage.getItem('financialData') || '[]');
+        }
+        return financialCache;
+    },
+    setFinancialData: (data) => {
+        financialCache = data;
+        sessionStorage.setItem('financialData', JSON.stringify(data));
+    },
 };
 
 function processServerData(data) {
@@ -77,12 +121,12 @@ const EMPTY_PRODUCT = Object.freeze({
     brand: '', price: '', category: '', categoryId: null, other_versions: {}
 });
 
-export async function fetchProductDetailsInBulk(asins) {
+export async function fetchProductDetailsInBulk(asins, { forceRefresh = false } = {}) {
     const results = {};
     const asinsToFetch = [];
 
     asins.forEach(asin => {
-        const cached = AppState.getProductDetails(asin);
+        const cached = !forceRefresh && AppState.getProductDetails(asin);
         if (cached) results[asin] = cached;
         else asinsToFetch.push(asin);
     });
@@ -101,13 +145,17 @@ export async function fetchProductDetailsInBulk(asins) {
         const bulkData = responseData?.get_product_details_v2?.products || {};
 
         asinsToFetch.forEach(asin => {
-            const raw = bulkData[asin] || { ...EMPTY_PRODUCT };
-            const productData = {
-                ...raw,
-                images: sanitizeImages(raw.images)
-            };
-            AppState.setProductDetails(asin, productData);
-            results[asin] = productData;
+            const raw = bulkData[asin];
+            if (raw) {
+                const productData = { ...raw, images: sanitizeImages(raw.images) };
+                AppState.setProductDetails(asin, productData);
+                results[asin] = productData;
+            } else {
+                // NU cache-uim un produs lipsă din răspuns — dacă backend-ul îl completează
+                // mai târziu, vrem să-l recitim la următorul fetch, nu să rămânem blocați
+                // cu stub-ul gol pentru tot restul sesiunii.
+                results[asin] = { ...EMPTY_PRODUCT };
+            }
         });
     } catch (error) {
         console.error('Eroare la preluarea detaliilor produselor:', error);
@@ -165,22 +213,26 @@ export async function fetchFinancialData() {
     }
 }
 
-export async function fetchPalletsData(orderId) {
-    if (!orderId) return [];
+// Singura implementare — exista anterior și o copie locală neexportată în main.js
+// care trimitea { commandId } în loc de { orderId } către ACELAȘI webhook (cod mort
+// divergent: main.js nu importa niciodată această funcție). Contractul { commandId }
+// e cel dovedit funcțional în producție (era cel efectiv apelat), deci a fost păstrat aici.
+export async function fetchPalletsData(commandId) {
+    if (!commandId) return [];
     try {
         const response = await fetch(GET_PALLETS_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderId: orderId })
+            body: JSON.stringify({ commandId })
         });
-        
+
         if (!response.ok) {
             console.error(`Fetch pallets error: ${response.status}`);
             return [];
         }
-        
+
         const data = await response.json();
-        return Array.isArray(data) ? data : (data.data || []);
+        return Array.isArray(data) ? data : (data.pallets || data.data || []);
     } catch (error) {
         console.error("Eroare fetch pallets:", error);
         return [];

@@ -10,11 +10,11 @@ import {
     generateNIR,
     sendToBalance,
     pushFirstAsinToOpenSales,
-    pushAllAsinsToOpenSales
+    pushAllAsinsToOpenSales,
+    pushAllAsinsToOpenSalesPrelist
 } from './api.js';
-import { AppState, fetchDataAndSyncState, fetchProductDetailsInBulk } from './data.js';
+import { AppState, fetchDataAndSyncState, fetchProductDetailsInBulk, fetchPalletsData } from './data.js';
 import { templates } from './templates.js';
-import { GET_PALLETS_WEBHOOK_URL } from './constants.js';
 
 // Selectarea rapidă a altei comenzi în dropdown-ul Financiar, înainte ca fetch-ul
 // anterior să se termine, ar suprascrie ecranul cu date vechi (race condition) —
@@ -37,28 +37,6 @@ import {
     handleCategorySearch,
     translateAllMissingRoInOrder
 } from './product-details.js';
-
-// --- FUNCȚIE HELPER PENTRU PALEȚI ---
-async function fetchPalletsData(commandId) {
-    try {
-        const response = await fetch(GET_PALLETS_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ commandId: commandId })
-        });
-        
-        if (!response.ok) {
-            console.error(`Eroare la preluarea paleților: ${response.status}`);
-            return [];
-        }
-        
-        const data = await response.json();
-        return Array.isArray(data) ? data : (data.pallets || []);
-    } catch (error) {
-        console.error("Eroare network paleți:", error);
-        return [];
-    }
-}
 
 // --- LOGICA DE CALCUL FINANCIAR (CU RAPORTARE ERORI) ---
 function performFinancialCalculations(commandId, products, palletsData) {
@@ -305,8 +283,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const productId = actionButton.dataset.productId; 
                 state.previousView = state.currentView; 
                 
-                const command = AppState.getCommands().find(c => c.id === commandId);
-                const product = command?.products.find(p => p.uniqueId === productId);
+                const command = AppState.getCommandById(commandId);
+                const product = command ? AppState.getProductByUniqueId(commandId, productId) : null;
 
                 if (product) {
                     state.currentCommandId = commandId;
@@ -336,7 +314,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const commandId = state.currentCommandId;
                 if (!commandId) { alert('Selectați o comandă mai întâi.'); return; }
 
-                const command = AppState.getCommands().find(c => c.id === commandId);
+                const command = AppState.getCommandById(commandId);
                 actionButton.disabled = true;
                 actionButton.textContent = 'Se verifică datele...';
                 
@@ -362,10 +340,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                         matchedFinancial.currency = document.getElementById('financiar-moneda').value;
                         matchedFinancial.exchangerate = document.getElementById('financiar-rata-schimb').value;
                         matchedFinancial.transportcost = document.getElementById('financiar-cost-transport').value;
-                        
-                        const asins = command.products.map(p => p.asin);
-                        const detailsMap = await fetchProductDetailsInBulk(asins);
-                        
+
+                        // performFinancialCalculations tocmai a citit AppState.getProductDetails(p.asin)
+                        // pentru fiecare produs — sunt deja garantat în cache (au fost fetch-uite la
+                        // intrarea în tab-ul Financiar / la schimbarea comenzii). Un nou
+                        // fetchProductDetailsInBulk aici ar fi doar un al doilea pass peste aceleași
+                        // date, fără niciun beneficiu.
+                        const detailsMap = {};
+                        command.products.forEach(p => {
+                            detailsMap[p.asin] = AppState.getProductDetails(p.asin) || {};
+                        });
+
                         detailsContainer.innerHTML = templates.financiarDetails(command, matchedFinancial, detailsMap, palletsData, calculatedData);
                         alert("Calcule efectuate cu succes!");
                     }
@@ -396,6 +381,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (action === 'opensales-all') {
                 if (!state.currentCommandId) { alert('Selectați o comandă mai întâi.'); return; }
                 await pushAllAsinsToOpenSales(state.currentCommandId, actionButton);
+            }
+
+            if (action === 'opensales-prelist') {
+                if (!state.currentCommandId) { alert('Selectați o comandă mai întâi.'); return; }
+                await pushAllAsinsToOpenSalesPrelist(state.currentCommandId, actionButton);
             }
 
             if (action === 'translate-missing-ro') {
@@ -533,7 +523,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const myToken = ++financiarSelectToken;
             state.currentCommandId = cmdId;
             const container = document.getElementById('financiar-details-container');
-            const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn'].map(id => document.getElementById(id));
+            const btns = ['save-financial-btn', 'generate-nir-btn', 'run-calculations-btn', 'send-balance-btn', 'opensales-prelist-btn'].map(id => document.getElementById(id));
             const opensalesBtns = ['opensales-first-btn', 'opensales-all-btn'].map(id => document.getElementById(id));
 
             if (!cmdId) {
@@ -549,16 +539,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             opensalesBtns.forEach(b => { if(b) b.disabled = !hasCalc; });
             container.innerHTML = '<div class="text-center p-8 text-gray-500">Se actualizează datele...</div>';
 
-            const cmdData = AppState.getCommands().find(c => c.id === cmdId);
+            const cmdData = AppState.getCommandById(cmdId);
             const financialData = AppState.getFinancialData().find(f => f.orderid === cmdId) || { orderid: cmdId };
             const palletsData = await fetchPalletsData(cmdId);
-            
-            // Golim cache-ul pt a forța update la preturi/titluri
-            if(cmdData && cmdData.products) {
-                cmdData.products.forEach(p => AppState.clearProductCache(p.asin));
-            }
-            
-            const detailsMap = await fetchProductDetailsInBulk(cmdData.products.map(p => p.asin));
+
+            // forceRefresh: intrarea în Financiar cere mereu preț/titlu proaspăt — înlocuiește
+            // bucla clearProductCache (o ștergere + un console.log per produs) cu un singur flag,
+            // fetchProductDetailsInBulk face oricum un singur fetch bulk pentru tot ce nu e cache.
+            const detailsMap = await fetchProductDetailsInBulk(cmdData.products.map(p => p.asin), { forceRefresh: true });
             const calculatedData = state.financialCalculations ? state.financialCalculations[cmdId] : null;
 
             if (myToken !== financiarSelectToken) return; // s-a selectat altă comandă între timp

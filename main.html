@@ -4,16 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manager Stocuri</title>
-    <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+    <!-- CSS Tailwind compilat static (build unic, generat cu Tailwind CLI, fără plugins —
+         aceeași configurație folosită anterior de CDN Play pentru main.html).
+         Regenerare: vezi tailwind/README.md. -->
+    <link rel="stylesheet" href="css/app.css">
     <link rel="stylesheet" href="css/style.css">
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js" defer></script>
+    <!-- jsPDF + autotable: doar pentru "Generează NIR" (tab Financiar) — încărcate on-demand
+         din api.js (loadJsPdf), nu aici, ca să nu plătească toți utilizatorii costul lor. -->
 
     <script>
         if (sessionStorage.getItem('isLoggedIn') !== 'true') window.location.href = 'index.html';

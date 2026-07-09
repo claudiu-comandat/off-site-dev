@@ -5,9 +5,10 @@ import {
     ASIN_UPDATE_WEBHOOK_URL,
     SAVE_FINANCIAL_WEBHOOK_URL,
     INSERT_BALANCE_WEBHOOK_URL,
-    PUSH_TO_OPENSALES_URL
+    PUSH_TO_OPENSALES_URL,
+    PRELIST_TO_OPENSALES_URL
 } from './constants.js';
-import { fetchDataAndSyncState, AppState, fetchProductDetailsInBulk } from './data.js';
+import { fetchDataAndSyncState, fetchFinancialData, AppState, fetchProductDetailsInBulk } from './data.js';
 import { state } from './state.js';
 
 /**
@@ -16,6 +17,32 @@ import { state } from './state.js';
 function removeDiacritics(str) {
     if (!str) return "";
     return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function loadScript(src) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`Nu s-a putut \u00eenc\u0103rca scriptul: ${src}`));
+        document.head.appendChild(script);
+    });
+}
+
+let jsPdfLoadingPromise = null;
+
+// jsPDF + jsPDF-autotable sunt folosite DOAR de generateNIR (buton "Genereaz\u0103 NIR",
+// tab Financiar) \u2014 nu merit\u0103 \u00eenc\u0103rcate blocant la fiecare load al main.html pentru
+// to\u021bi userii, majoritatea nefolosind niciodat\u0103 acest buton. Le \u00eenc\u0103rc\u0103m o singur\u0103
+// dat\u0103, la prima generare de NIR din sesiune (autotable trebuie s\u0103 vin\u0103 DUP\u0102 jsPDF,
+// se ata\u0219eaz\u0103 pe prototipul lui).
+async function loadJsPdf() {
+    if (window.jspdf) return;
+    if (!jsPdfLoadingPromise) {
+        jsPdfLoadingPromise = loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js')
+            .then(() => loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js'));
+    }
+    await jsPdfLoadingPromise;
 }
 
 /**
@@ -32,7 +59,7 @@ export async function sendToBalance(commandId, buttonElement) {
             throw new Error("Nu există calcule financiare. Rulați 'Rulează Calcule' mai întâi.");
         }
 
-        const command = AppState.getCommands().find(c => c.id === commandId);
+        const command = AppState.getCommandById(commandId);
         if (!command) throw new Error('Comanda nu a fost găsită.');
 
         const asins = command.products.map(p => p.asin);
@@ -370,12 +397,19 @@ export async function generateNIR(commandId, buttonElement) {
             throw new Error("Nu există calcule financiare pentru această comandă. Vă rugăm rulați 'Rulează Calcule' în tab-ul Financiar înainte de a genera NIR-ul.");
         }
 
-        const command = AppState.getCommands().find(c => c.id === commandId);
+        const command = AppState.getCommandById(commandId);
         if (!command) throw new Error('Comanda nu a fost găsită.');
 
         // --- LOGICA PENTRU NUMAR NIR ---
+        // ponytail: max(nirnumber)+1 calculat client-side rămâne o race condition —
+        // două generări de NIR simultane (2 taburi/2 useri) pot produce același număr.
+        // Fix complet cere o secvență atomică server-side (ex: coloană SERIAL dedicată,
+        // UPDATE ... RETURNING în n8n). Aici doar îngustăm fereastra: cerem datele
+        // financiare PROASPETE de la server chiar înainte de calcul, în loc să ne bazăm
+        // pe sessionStorage care poate fi vechi de minute/ore dintr-o sesiune anterioară.
+        await fetchFinancialData();
         const allFinancials = AppState.getFinancialData();
-        
+
         // Căutăm datele financiare pentru comanda curentă
         let currentFinancials = allFinancials.find(f => f.orderid === commandId) || {};
         
@@ -474,7 +508,8 @@ export async function generateNIR(commandId, buttonElement) {
             throw new Error("Nu există produse valide recepționate (cu cost > 0) pentru a genera NIR.");
         }
 
-        // 3. Generare PDF cu jsPDF
+        // 3. Generare PDF cu jsPDF (încărcat on-demand — vezi loadJsPdf mai sus)
+        await loadJsPdf();
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
@@ -607,16 +642,17 @@ export async function generateNIR(commandId, buttonElement) {
 // Off-site trimite doar { asins: [...] }; n8n face fetch + asamblare + push.
 
 /**
- * POST { orderId, asins } către PUSH_TO_OPENSALES_URL. Feedback simplu prin alert.
+ * POST { orderId, asins } către `url` (implicit PUSH_TO_OPENSALES_URL — fluxul normal;
+ * pasează PRELIST_TO_OPENSALES_URL pentru prelistare). Feedback simplu prin alert.
  * orderId = numărul COMPLET al comenzii (command.id) — n8n îl folosește ca să știe
  * din ce tabelă ia stocul.
  */
-async function postAsinsToOpenSales(orderId, asins, buttonElement) {
+async function postAsinsToOpenSales(orderId, asins, buttonElement, url = PUSH_TO_OPENSALES_URL) {
     const originalHTML = buttonElement.innerHTML;
     buttonElement.disabled = true;
     buttonElement.innerHTML = '<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto"></div>';
     try {
-        const response = await fetch(PUSH_TO_OPENSALES_URL, {
+        const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ orderId, asins })
@@ -664,27 +700,35 @@ function visibleReceivedProducts(products, detailsMap) {
 
 /**
  * Buton "OpenSales (primul)": trimite ASIN-ul PRIMULUI produs vizibil din lista
- * "produse recepționate" (în ordinea afișată pe ecran).
+ * "produse recepționate" (în ordinea afișată pe ecran). `url` implicit = fluxul normal.
  */
-export async function pushFirstAsinToOpenSales(commandId, buttonElement) {
-    const command = AppState.getCommands().find(c => c.id === commandId);
+export async function pushFirstAsinToOpenSales(commandId, buttonElement, url = PUSH_TO_OPENSALES_URL) {
+    const command = AppState.getCommandById(commandId);
     if (!command || !command.products?.length) { alert('Comanda nu are produse.'); return; }
     const detailsMap = await fetchProductDetailsInBulk(command.products.map(p => p.asin));
     const visible = visibleReceivedProducts(command.products, detailsMap);
     if (!visible.length) { alert('Nu există produse vizibile în listă.'); return; }
-    await postAsinsToOpenSales(command.id, [visible[0].asin], buttonElement);
+    await postAsinsToOpenSales(command.id, [visible[0].asin], buttonElement, url);
 }
 
 /**
  * Buton "OpenSales (toate)": trimite ASIN-urile (unice) ale TUTUROR produselor
- * vizibile în lista "produse recepționate".
+ * vizibile în lista "produse recepționate". `url` implicit = fluxul normal.
  */
-export async function pushAllAsinsToOpenSales(commandId, buttonElement) {
-    const command = AppState.getCommands().find(c => c.id === commandId);
+export async function pushAllAsinsToOpenSales(commandId, buttonElement, url = PUSH_TO_OPENSALES_URL) {
+    const command = AppState.getCommandById(commandId);
     if (!command || !command.products?.length) { alert('Comanda nu are produse.'); return; }
     const detailsMap = await fetchProductDetailsInBulk(command.products.map(p => p.asin));
     const visible = visibleReceivedProducts(command.products, detailsMap);
     if (!visible.length) { alert('Nu există produse vizibile în listă.'); return; }
     const asins = [...new Set(visible.map(p => p.asin).filter(Boolean))];
-    await postAsinsToOpenSales(command.id, asins, buttonElement);
+    await postAsinsToOpenSales(command.id, asins, buttonElement, url);
+}
+
+/**
+ * Buton "Prelistare": trimite ASIN-urile (unice) ale produselor vizibile, prin
+ * fluxul de prelistare eMAG (fără categorie/caracteristici — vezi PRELIST_TO_OPENSALES_URL).
+ */
+export async function pushAllAsinsToOpenSalesPrelist(commandId, buttonElement) {
+    await pushAllAsinsToOpenSales(commandId, buttonElement, PRELIST_TO_OPENSALES_URL);
 }
