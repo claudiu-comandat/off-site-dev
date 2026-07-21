@@ -727,6 +727,13 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
 
         state.descriptionEditorMode = 'raw';
 
+        // Notițe read-only aduse din on-site (text introdus de user → mereu escapat, nu innerHTML brut).
+        const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const notes = Array.isArray(product.notes) ? product.notes : [];
+        const notesHtml = notes.length
+            ? notes.map((n) => `<li class="text-sm text-gray-700 bg-yellow-50 border border-yellow-200 rounded-md p-2">${esc(n.text)}</li>`).join('')
+            : '<li class="text-sm text-gray-400 italic">Nicio notiță</li>';
+
         const isProductReady = product.listingReady === true;
         const readyButtonText = isProductReady ? "Anulează Marcaj Gata" : "Marchează Gata";
         const readyButtonIcon = isProductReady ? "cancel" : "task_alt";
@@ -782,6 +789,13 @@ financiarProductTable: (products, detailsMap, commandId, calculatedData = null) 
                             </div>
                         </div>
                         </div>
+                    <div class="bg-white p-4 rounded-xl shadow-sm">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="material-icons text-yellow-500 text-base">sticky_note_2</span>
+                            <h3 class="text-sm font-semibold text-gray-700">Notițe din on-site</h3>
+                        </div>
+                        <ul class="space-y-2">${notesHtml}</ul>
+                    </div>
                 </div>
 
                 <div class="lg:col-span-2 bg-white rounded-xl shadow-sm">

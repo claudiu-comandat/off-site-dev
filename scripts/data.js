@@ -92,10 +92,13 @@ function processServerData(data) {
             vgcondition: p.vgcondition || 0,
             gcondition: p.gcondition || 0,
             broken: p.broken || 0,
-            stockcode: p.stockcode, 
+            stockcode: p.stockcode,
             unitweight: p.unitweight,
             estimatedsalevaluewithvat: p.estimatedsalevaluewithvat,
-            verificationready: p.verificationready
+            verificationready: p.verificationready,
+            // Notițele introduse în on-site — același webhook 5a447557 le întoarce deja,
+            // le afișăm read-only în detaliul produsului (produsDetaliu).
+            notes: Array.isArray(p.notes) ? p.notes : []
         }))
     }));
 }
